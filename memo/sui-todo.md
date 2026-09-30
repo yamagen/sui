@@ -11,7 +11,7 @@ SUI is an empirical segmentation analyzer and segmentation explorer that induces
 Memory capacity does not determine data lifetime.
 メモリに収まることは、そのデータを一時的な内部状態にしてよい理由にはならない。
 
-Last change: 2026/09/16-12:05:47.
+Last change: 2026/09/28-16:34:11.
 
 ## 連接単位誘導 — 構想メモ
 
@@ -1343,16 +1343,18 @@ ledger-candy.jsonl
 構造は、
 
 ```text
-compiled trie
-    |
-    | primary lookup
-    v
-   miss
-    |
-    v
 ledger-candy.jsonl
     |
-    | in-memory supplementary lookup
+    | load into memory
+    | primary lookup
+    v
+   hit ─────────────→ candidate
+    |
+   miss
+    v
+compiled ledger.dat
+    |
+    | mmap lookup
     v
 candidate
 ```

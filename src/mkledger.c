@@ -1,33 +1,19 @@
+#include "ledger.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define LINE_SIZE 4096
 #define NFIELDS 5
-#define TRIE_NONE UINT32_MAX
-
-typedef struct {
-  uint32_t token;
-  uint32_t child;
-  uint32_t sibling;
-  uint32_t freq;
-} TrieNode;
+#define VERSION "0.1.0"
 
 typedef struct {
   TrieNode *v;
   size_t n;
   size_t cap;
 } Trie;
-
-#define LEDGER_MAGIC 0x53554932u /* "SUI2" */
-
-typedef struct {
-  uint32_t magic;
-  uint32_t version;
-  uint32_t trie_nodes;
-  uint32_t unique_surfaces;
-} LedgerHeader;
 
 typedef struct {
   char left[LINE_SIZE];
@@ -45,7 +31,6 @@ typedef struct {
   size_t n;
   size_t unique_pairs;
   size_t max_freq;
-  size_t freq_dist[100];
 } PairTable;
 
 typedef struct {
@@ -371,13 +356,15 @@ static PairTable make_pair_table(Pair *pairv, size_t pairs, char **surfacev,
     if (freq > table.max_freq)
       table.max_freq = freq;
 
-    if (freq < 100)
-      table.freq_dist[freq]++;
-
     i = j;
   }
 
   return table;
+}
+
+static void show_pair_freq(const PairTable *table) {
+  for (size_t i = 0; i < table->n; i++)
+    printf("%zu\n", table->v[i].freq);
 }
 
 static void show_stat(const LedgerInput *in, const PairTable *pair_table,
@@ -396,13 +383,6 @@ static void show_stat(const LedgerInput *in, const PairTable *pair_table,
 
   for (size_t i = 0; i < unique_surfaces && i < 10; i++)
     printf("surface[%zu]: %s\n", i, in->surfacev[i]);
-
-  printf("\nfrequency distribution:\n");
-
-  for (size_t i = 1; i < 100; i++) {
-    if (pair_table->freq_dist[i] > 0)
-      printf("%2zu: %zu\n", i, pair_table->freq_dist[i]);
-  }
 }
 
 static void free_mem(LedgerInput *in, PairTable *pair_table,
@@ -540,8 +520,7 @@ static int make_trie(Trie *trie, const LedgerInput *in,
   free(tokens);
   return 0;
 }
-
-static int write_ledger(const char *path, const Trie *trie,
+static int write_ledger(const char *path, const Trie *trie, char **surfacev,
                         size_t unique_surfaces) {
   FILE *fp;
   LedgerHeader header;
@@ -572,6 +551,36 @@ static int write_ledger(const char *path, const Trie *trie,
     return -1;
   }
 
+  uint32_t offset = 0;
+
+  for (size_t i = 0; i < unique_surfaces; i++) {
+    if (fwrite(&offset, sizeof offset, 1, fp) != 1) {
+      perror(path);
+      fclose(fp);
+      return -1;
+    }
+
+    size_t len = strlen(surfacev[i]) + 1;
+
+    if (len > UINT32_MAX - offset) {
+      fprintf(stderr, "surface table too large\n");
+      fclose(fp);
+      return -1;
+    }
+
+    offset += (uint32_t)len;
+  }
+
+  for (size_t i = 0; i < unique_surfaces; i++) {
+    size_t len = strlen(surfacev[i]) + 1;
+
+    if (fwrite(surfacev[i], 1, len, fp) != len) {
+      perror(path);
+      fclose(fp);
+      return -1;
+    }
+  }
+
   if (fclose(fp) != 0) {
     perror(path);
     return -1;
@@ -580,7 +589,7 @@ static int write_ledger(const char *path, const Trie *trie,
   return 0;
 }
 
-static int mkledger(LedgerInput *in) {
+static int mkledger(LedgerInput *in, int show_stats, int show_freq) {
   size_t unique_surfaces = make_surface_table(in->surfacev, in->nsurfaces);
 
   PairTable pair_table =
@@ -595,13 +604,19 @@ static int mkledger(LedgerInput *in) {
     return -1;
   }
 
-  printf("trie nodes: %zu\n", trie.n);
-
-  if (write_ledger("ledger.dat", &trie, unique_surfaces) != 0) {
+  if (write_ledger("ledger.dat", &trie, in->surfacev, unique_surfaces) != 0) {
     fprintf(stderr, "cannot write ledger.dat\n");
     trie_free(&trie);
     free_mem(in, &pair_table, unique_surfaces);
     return -1;
+  }
+
+  if (show_freq)
+    show_pair_freq(&pair_table);
+
+  if (show_stats) {
+    show_stat(in, &pair_table, unique_surfaces);
+    printf("trie nodes: %zu\n", trie.n);
   }
 
   trie_free(&trie);
@@ -612,24 +627,58 @@ static int mkledger(LedgerInput *in) {
     return -1;
   }
 
-  show_stat(in, &pair_table, unique_surfaces);
-
   free_mem(in, &pair_table, unique_surfaces);
 
   return 0;
 }
 
+static void usage(const char *prog) {
+  printf("Usage: %s [options] [ledger.in]\n", prog);
+  printf("Compile ledger input into ledger.dat\n");
+  printf("Options:\n");
+  printf("  -f  output pair frequencies\n");
+  printf("  -s  show statistics\n");
+  printf("  -h  show this help\n");
+  printf("  -v  show version\n");
+}
+
 int main(int argc, char *argv[]) {
   FILE *fp;
+  int show_stats = 0;
+  int show_freq = 0;
+  int opt;
 
-  if (argc != 2) {
-    fprintf(stderr, "usage: %s ledger.in\n", argv[0]);
-    return EXIT_FAILURE;
+  while ((opt = getopt(argc, argv, "fshv")) != -1) {
+    switch (opt) {
+    case 'f':
+      show_freq = 1;
+      break;
+    case 's':
+      show_stats = 1;
+      break;
+    case 'h':
+      usage(argv[0]);
+      return EXIT_SUCCESS;
+    case 'v':
+      printf("mkledger %s\n", VERSION);
+      return EXIT_SUCCESS;
+    default:
+      usage(argv[0]);
+      return EXIT_FAILURE;
+    }
   }
 
-  fp = fopen(argv[1], "r");
-  if (fp == NULL) {
-    perror(argv[1]);
+  if (optind == argc) {
+    fp = stdin;
+  } else if (optind + 1 == argc) {
+    fp = fopen(argv[optind], "r");
+    if (fp == NULL) {
+      perror(argv[optind]);
+      usage(argv[0]);
+      return EXIT_FAILURE;
+    }
+  } else {
+    usage(argv[0]);
     return EXIT_FAILURE;
   }
 
@@ -641,9 +690,10 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  fclose(fp);
+  if (fp != stdin)
+    fclose(fp);
 
-  if (mkledger(&in) != 0)
+  if (mkledger(&in, show_stats, show_freq) != 0)
     return EXIT_FAILURE;
 
   return EXIT_SUCCESS;
