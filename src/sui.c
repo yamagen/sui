@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,7 @@ typedef struct {
   size_t end;
   size_t depth;
   uint32_t freq;
+  uint32_t surface;
 } LongestPath;
 
 typedef struct {
@@ -53,6 +55,113 @@ typedef struct {
   size_t n;
   size_t cap;
 } GapList;
+
+static bool reach_covers_adjacency(const LongestPathList *list,
+                                   const LatticeEdge *a, const LatticeEdge *b);
+static void show_uncovered_adjacencies(const Ledger *ledger, const char *input,
+                                       const Lattice *lat,
+                                       const LongestPathList *list);
+
+static void longest_path_list_init(LongestPathList *list);
+static void longest_path_list_free(LongestPathList *list);
+static int longest_path_list_add(LongestPathList *list,
+                                 const LongestPath *path);
+
+static int is_separator(const char *input, size_t start, size_t end);
+static int lattice_edges_connect(const char *input, const LatticeEdge *a,
+                                 const LatticeEdge *b);
+
+static void lattice_init(Lattice *lat);
+static void lattice_free(Lattice *lat);
+static int lattice_add(Lattice *lat, size_t start, size_t end,
+                       uint32_t surface);
+
+static void gaplist_init(GapList *gaps);
+static void gaplist_free(GapList *gaps);
+static int gaplist_add(GapList *gaps, size_t start, size_t end);
+static size_t utf8_next(const char *s, size_t pos);
+static int find_lattice_gaps(const char *input, const Lattice *lat,
+                             GapList *gaps);
+static int show_lattice_gaps(const char *input, const Lattice *lat);
+static void unload_ledger(Ledger *ledger);
+static int load_ledger(const char *path, Ledger *ledger);
+static int make_lattice(const Ledger *ledger, const char *input, Lattice *lat);
+static uint32_t trie_find(const Ledger *ledger, uint32_t node,
+                          uint32_t surface);
+static void follow_path(const Ledger *ledger, const char *input,
+                        const Lattice *lat, size_t edge_index, uint32_t node,
+                        size_t depth);
+static void show_paths(const Ledger *ledger, const char *input,
+                       const Lattice *lat);
+static void find_longest_from(const Ledger *ledger, const char *input,
+                              const Lattice *lat, size_t edge_index,
+                              uint32_t node, size_t depth, LongestPath *best);
+static int make_longest_paths(const Ledger *ledger, const char *input,
+                              const Lattice *lat, LongestPathList *list);
+static void show_longest_paths(const char *input, const LongestPathList *list);
+static void show_reach(const LongestPathList *list);
+static int process_input(const Ledger *ledger);
+
+static bool reach_covers_adjacency(const LongestPathList *list,
+                                   const LatticeEdge *a, const LatticeEdge *b) {
+  const LongestPath *path;
+
+  for (path = list->v; path < list->v + list->n; path++) {
+    if (path->start <= a->start && path->end >= b->end)
+      return true;
+  }
+
+  return false;
+}
+
+static void show_uncovered_adjacencies(const Ledger *ledger, const char *input,
+                                       const Lattice *lat,
+                                       const LongestPathList *list) {
+  const LatticeEdge *a;
+  const LatticeEdge *b;
+  const char *as;
+  const char *bs;
+
+  for (a = lat->v; a < lat->v + lat->n; a++) {
+    for (b = lat->v; b < lat->v + lat->n; b++) {
+      if (!lattice_edges_connect(input, a, b))
+        continue;
+
+      if (reach_covers_adjacency(list, a, b))
+        continue;
+
+      as = ledger->surface_strings + ledger->surface_offset[a->surface];
+      bs = ledger->surface_strings + ledger->surface_offset[b->surface];
+
+      printf("add an adjacency of A with B: %.*s[%.*s]%s\n", (int)a->start,
+             input, (int)(b->end - a->start), input + a->start, input + b->end);
+
+      printf("{\"word\":\"%s\"}\n", as);
+      printf("{\"word\":\"%s\"}\n", bs);
+    }
+  }
+}
+
+static void show_reach(const LongestPathList *list) {
+  const LongestPath *path;
+  const LongestPath *other;
+  bool is_longest;
+
+  for (path = list->v; path < list->v + list->n; path++) {
+    is_longest = true;
+
+    for (other = list->v; other < list->v + list->n; other++) {
+      if (other->start == path->start && other->end > path->end) {
+        is_longest = false;
+        break;
+      }
+    }
+
+    if (is_longest)
+      printf("reach\t%zu\t%zu\tdepth=%zu\tfreq=%u\n", path->start, path->end,
+             path->depth, path->freq);
+  }
+}
 
 static void longest_path_list_init(LongestPathList *list) {
   list->v = NULL;
@@ -406,6 +515,7 @@ static void find_longest_from(const Ledger *ledger, const char *input,
     best->end = edge->end;
     best->depth = depth;
     best->freq = ledger->trie[node].freq;
+    best->surface = edge->surface;
   }
 
   for (i = 0; i < lat->n; i++) {
@@ -439,6 +549,7 @@ static int make_longest_paths(const Ledger *ledger, const char *input,
     best.end = lat->v[i].end;
     best.depth = 1;
     best.freq = ledger->trie[node].freq;
+    best.surface = lat->v[i].surface;
 
     find_longest_from(ledger, input, lat, i, node, 1, &best);
 
@@ -504,6 +615,8 @@ static int process_input(const Ledger *ledger) {
   }
 
   show_longest_paths(input, &paths);
+  show_reach(&paths);
+  show_uncovered_adjacencies(ledger, input, &lat, &paths);
 
   longest_path_list_free(&paths);
 
