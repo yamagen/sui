@@ -1251,7 +1251,7 @@ static int emit_observed_paths(const Ledger *ledger, const char *input,
   return 0;
 }
 
-static int process_input(const Ledger *ledger, int monitor) {
+static int process_input(const Ledger *ledger, int monitor, int unresolved) {
   char input[4096];
   Lattice lat;
 
@@ -1284,7 +1284,15 @@ static int process_input(const Ledger *ledger, int monitor) {
       if (path->start == 0 && path->end > target_end)
         target_end = path->end;
 
-    if (emit_observed_paths(ledger, input, &lat, target_end) != 0) {
+    if (unresolved) {
+      size_t input_end = strlen(input);
+
+      if (target_end < input_end) {
+        printf("{\"start\":%zu,\"end\":%zu,\"text\":", target_end, input_end);
+        print_json_string(input + target_end);
+        fputs("}\n", stdout);
+      }
+    } else if (emit_observed_paths(ledger, input, &lat, target_end) != 0) {
       longest_path_list_free(&paths);
       lattice_free(&lat);
       return -1;
@@ -1366,24 +1374,33 @@ int main(int argc, char *argv[]) {
   Ledger ledger;
   const char *path;
   int monitor = 0;
+  int unresolved = 0;
   int opt;
 
-  while ((opt = getopt(argc, argv, "mh")) != -1) {
+  while ((opt = getopt(argc, argv, "muh")) != -1) {
     switch (opt) {
     case 'm':
       monitor = 1;
       break;
+    case 'u':
+      unresolved = 1;
+      break;
     case 'h':
-      printf("usage: %s [-m] ledger.dat\n", argv[0]);
+      printf("usage: %s [-m | -u] ledger.dat\n", argv[0]);
       return EXIT_SUCCESS;
     default:
-      fprintf(stderr, "usage: %s [-m] ledger.dat\n", argv[0]);
+      fprintf(stderr, "usage: %s [-m | -u] ledger.dat\n", argv[0]);
       return EXIT_FAILURE;
     }
   }
 
+  if (monitor && unresolved) {
+    fprintf(stderr, "usage: %s [-m | -u] ledger.dat\n", argv[0]);
+    return EXIT_FAILURE;
+  }
+
   if (optind + 1 != argc) {
-    fprintf(stderr, "usage: %s [-m] ledger.dat\n", argv[0]);
+    fprintf(stderr, "usage: %s [-m | -u] ledger.dat\n", argv[0]);
     return EXIT_FAILURE;
   }
 
@@ -1397,7 +1414,7 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  if (process_input(&ledger, monitor) != 0) {
+  if (process_input(&ledger, monitor, unresolved) != 0) {
     unload_ledger(&ledger);
     return EXIT_FAILURE;
   }
