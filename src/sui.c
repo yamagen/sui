@@ -1919,10 +1919,7 @@ static char *parse_candy_text(const char *line) {
   tjson_t json;
   char *text = NULL;
 
-  if (line[0] != '!')
-    return NULL;
-
-  tjson_init(&json, "candy", line + 1);
+  tjson_init(&json, "candy", line[0] == '!' ? line + 1 : line);
   tjson_skip_ws(&json);
   tjson_expect(&json, '{');
 
@@ -2024,6 +2021,11 @@ static int index_candy_surfaces(Ledger *ledger,
     if (copy == NULL)
       return -1;
 
+    if (copy[0] == '!') {
+      free(copy);
+      goto next_line;
+    }
+
     text = parse_candy_text(copy);
     free(copy);
 
@@ -2053,6 +2055,7 @@ static int index_candy_surfaces(Ledger *ledger,
       surface++;
     }
 
+next_line:
     if (nl == NULL)
       break;
     offset = (size_t)(nl - base) + 1;
@@ -2087,6 +2090,9 @@ static int scan_candy_surface(const Ledger *ledger,
     size_t len;
 
     line[strcspn(line, "\r\n")] = '\0';
+    if (line[0] == '!')
+      continue;
+
     text = parse_candy_text(line);
     if (text == NULL)
       continue;
