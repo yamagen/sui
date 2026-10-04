@@ -56,37 +56,6 @@ static void trie_init(Trie *trie) {
   trie->cap = 0;
 }
 
-') {
-      tjson_expect(&json, '}');
-      break;
-    }
-  }
-
-  tjson_skip_ws(&json);
-
-  if (json.pos != json.length) {
-    free(text);
-    return -1;
-  }
-
-  free(text);
-  return 0;
-}
-
-') {
-      tjson_expect(json, '}');
-      return;
-    }
-  }
-}
-
-') {
-      tjson_expect(json, '}');
-      return;
-    }
-  }
-}
-
 static int trie_add_node(Trie *trie, uint32_t token) {
   TrieNode *tmp;
 
