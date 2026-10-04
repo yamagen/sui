@@ -58,4 +58,20 @@ printf '%s\n' "$context" |
   ' >/dev/null ||
   fail "unresolved provenance context"
 
+candy=$(mktemp)
+candy_config=$(mktemp)
+trap 'rm -f "$candy" "$candy_config"' EXIT
+jq --arg filename "$candy" '.candy.filename = $filename' tests/ledger-config.json >"$candy_config"
+
+printf '%s\n' '{"text":"男につきて何か","provenance":{"corpus":"taketori","id":37,"token":5}}' |
+  "$SUI" -c "$candy_config" -a "$LEDGER" >/dev/null
+
+jq -e '
+  select(.start == 15 and .end == 21 and .text == "何か" and
+         .provenance.corpus == "taketori" and
+         .provenance.id == 37 and
+         .provenance.token == 5)
+' "$candy" >/dev/null ||
+  fail "candy append"
+
 echo "PASS: sui regression tests"
