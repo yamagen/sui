@@ -1256,7 +1256,8 @@ static int emit_observed_path_from(const Ledger *ledger,
                                    const char *input, const Lattice *lat,
                                    const LatticeEdge *edge,
                                    const OccurrenceRecord *occurrence,
-                                   uint32_t *combinev, size_t depth) {
+                                   uint32_t *combinev, size_t depth,
+                                   size_t input_bytes) {
   const OccurrenceRecord *end;
   const OccurrenceRecord *next_occurrence;
   const LatticeEdge *next_edge;
@@ -1278,14 +1279,15 @@ static int emit_observed_path_from(const Ledger *ledger,
           continue;
 
         if (emit_observed_path_from(ledger, input, lat, next_edge,
-                                    next_occurrence, combinev, depth + 1) != 0)
+                                    next_occurrence, combinev, depth + 1,
+                                    input_bytes) != 0)
           return -1;
         extended = true;
       }
     }
   }
 
-  if (!extended) {
+  if (!extended && edge->end == input_bytes) {
     for (i = 0; i < depth; i++)
       if (emit_combine(ledger, combinev[i]) != 0)
         return -1;
@@ -1300,6 +1302,7 @@ static int emit_observed_paths(const Ledger *ledger, const char *input,
   const OccurrenceRecord *occurrence;
   const OccurrenceRecord *end;
   uint32_t *combinev;
+  size_t input_bytes = strlen(input);
 
   if (lat->n == 0)
     return 0;
@@ -1311,12 +1314,15 @@ static int emit_observed_paths(const Ledger *ledger, const char *input,
   end = ledger->occurrencev + ledger->occurrence->noccurrences;
 
   for (edge = lat->v; edge < lat->v + lat->n; edge++) {
+    if (edge->start != 0)
+      continue;
+
     for (occurrence = ledger->occurrencev; occurrence < end; occurrence++) {
       if (occurrence->surface != edge->surface)
         continue;
 
       if (emit_observed_path_from(ledger, input, lat, edge, occurrence,
-                                  combinev, 1) != 0) {
+                                  combinev, 1, input_bytes) != 0) {
         free(combinev);
         return -1;
       }
