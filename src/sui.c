@@ -136,9 +136,10 @@ static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
                            const SuiInput *input, size_t start, size_t end);
 static char *parse_candy_text(const char *line);
 static int index_candy_surfaces(Ledger *ledger, const MkledgerConfig *config);
-static int scan_candy_surface(const MkledgerConfig *config,
+static int scan_candy_surface(const Ledger *ledger,
+                              const MkledgerConfig *config,
                               const char *input, size_t start,
-                              size_t *matched_end);
+                              size_t *matched_end, uint32_t *matched_surface);
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy);
 
@@ -1723,15 +1724,18 @@ static int index_candy_surfaces(Ledger *ledger,
   return 0;
 }
 
-static int scan_candy_surface(const MkledgerConfig *config,
+static int scan_candy_surface(const Ledger *ledger,
+                              const MkledgerConfig *config,
                               const char *input, size_t start,
-                              size_t *matched_end) {
+                              size_t *matched_end, uint32_t *matched_surface) {
   FILE *fp;
   char line[4096];
   size_t input_end = strlen(input);
+  uint32_t surface = ledger->null_surface;
   int found = 0;
 
   *matched_end = start;
+  *matched_surface = ledger->null_surface;
 
   if (config == NULL || config->candy.filename == NULL)
     return 0;
@@ -1749,12 +1753,14 @@ static int scan_candy_surface(const MkledgerConfig *config,
     if (text == NULL)
       continue;
 
+    surface++;
     len = strlen(text);
 
     if (len != 0 && start + len <= input_end &&
         memcmp(input + start, text, len) == 0 &&
         start + len > *matched_end) {
       *matched_end = start + len;
+      *matched_surface = surface;
       found = 1;
     }
 
@@ -1815,8 +1821,9 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       while (target_end < input_end) {
         size_t candy_end;
         size_t known_end;
-        int candy_status =
-            scan_candy_surface(config, input, target_end, &candy_end);
+        uint32_t candy_surface;
+        int candy_status = scan_candy_surface(
+            ledger, config, input, target_end, &candy_end, &candy_surface);
 
         if (candy_status < 0) {
           longest_path_list_free(&paths);
@@ -1828,6 +1835,7 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
         if (candy_status == 0)
           break;
 
+        (void)candy_surface;
         target_end = candy_end;
         known_end = target_end;
 
