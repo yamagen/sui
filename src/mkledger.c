@@ -1220,10 +1220,22 @@ static void show_pair_freq(const PairTable *table) {
     printf("%zu\n", table->v[i].freq);
 }
 
+static size_t count_provenance(const LedgerInput *in) {
+  const Combine *combine;
+  size_t nprovenance = 0;
+
+  for (combine = in->combinev; combine < in->combinev + in->ncombines;
+       combine++)
+    nprovenance += combine->nprovenance;
+
+  return nprovenance;
+}
+
 static void show_stat(const LedgerInput *in, const PairTable *pair_table,
                       size_t unique_surfaces) {
   printf("records:   %zu\n", in->records);
   printf("combines:  %zu\n", in->ncombines);
+  printf("provenance: %zu\n", count_provenance(in));
   printf("sequences: %zu\n", in->sequences);
   printf("pairs:     %zu\n", in->pairs);
   printf("unique:    %zu\n", pair_table->unique_pairs);
