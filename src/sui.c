@@ -422,10 +422,70 @@ static int find_combine_section(Ledger *ledger) {
   return 0;
 }
 
+static int find_occurrence_section(Ledger *ledger) {
+  const char *p = (const char *)(ledger->combine + 1);
+  const char *end = (const char *)ledger->map + ledger->size;
+  uint32_t i;
+
+  for (i = 0; i < ledger->combine->ncombines; i++) {
+    const CombineRecordHeader *combine;
+    uint32_t j;
+
+    if ((size_t)(end - p) < sizeof *combine)
+      return -1;
+
+    combine = (const CombineRecordHeader *)p;
+    p += sizeof *combine;
+
+    for (j = 0; j < combine->nfields; j++) {
+      p = skip_ledger_field(p, end);
+      if (p == NULL)
+        return -1;
+    }
+
+    for (j = 0; j < combine->nprovenance; j++) {
+      const ProvenanceRecordHeader *provenance;
+      uint32_t k;
+
+      if ((size_t)(end - p) < sizeof *provenance)
+        return -1;
+
+      provenance = (const ProvenanceRecordHeader *)p;
+      p += sizeof *provenance;
+
+      for (k = 0; k < provenance->nfields; k++) {
+        p = skip_ledger_field(p, end);
+        if (p == NULL)
+          return -1;
+      }
+    }
+  }
+
+  if ((size_t)(end - p) < sizeof *ledger->occurrence)
+    return -1;
+
+  ledger->occurrence = (const OccurrenceSectionHeader *)p;
+
+  if (ledger->occurrence->magic != OCCURRENCE_MAGIC ||
+      ledger->occurrence->version != 1)
+    return -1;
+
+  p += sizeof *ledger->occurrence;
+
+  if (ledger->occurrence->noccurrences >
+      (size_t)(end - p) / sizeof *ledger->occurrencev)
+    return -1;
+
+  ledger->occurrencev = (const OccurrenceRecord *)p;
+  p += (size_t)ledger->occurrence->noccurrences * sizeof *ledger->occurrencev;
+
+  return p == end ? 0 : -1;
+}
+
 static int count_ledger_provenance(const Ledger *ledger,
                                    uint32_t *nprovenance) {
   const char *p = (const char *)(ledger->combine + 1);
-  const char *end = (const char *)ledger->map + ledger->size;
+  const char *end = (const char *)ledger->occurrence;
   uint32_t total = 0;
   uint32_t i;
 
@@ -466,24 +526,6 @@ static int count_ledger_provenance(const Ledger *ledger,
       }
     }
   }
-
-  if ((size_t)(end - p) < sizeof *ledger->occurrence)
-    return -1;
-
-  ledger->occurrence = (const OccurrenceSectionHeader *)p;
-
-  if (ledger->occurrence->magic != OCCURRENCE_MAGIC ||
-      ledger->occurrence->version != 1)
-    return -1;
-
-  p += sizeof *ledger->occurrence;
-
-  if (ledger->occurrence->noccurrences >
-      (size_t)(end - p) / sizeof *ledger->occurrencev)
-    return -1;
-
-  ledger->occurrencev = (const OccurrenceRecord *)p;
-  p += (size_t)ledger->occurrence->noccurrences * sizeof *ledger->occurrencev;
 
   if (p != end)
     return -1;
@@ -835,6 +877,12 @@ static int load_ledger(const char *path, Ledger *ledger) {
 
   if (find_combine_section(ledger) != 0) {
     fprintf(stderr, "invalid combine section\n");
+    munmap(ledger->map, ledger->size);
+    return -1;
+  }
+
+  if (find_occurrence_section(ledger) != 0) {
+    fprintf(stderr, "invalid occurrence section\n");
     munmap(ledger->map, ledger->size);
     return -1;
   }
