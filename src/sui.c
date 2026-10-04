@@ -1588,7 +1588,7 @@ static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
                            const SuiInput *input, size_t start, size_t end) {
   const SchemaField *field;
 
-  fprintf(fp, "{\"start\":%zu,\"end\":%zu,\"text\":", start, end);
+  fprintf(fp, "!{\"start\":%zu,\"end\":%zu,\"text\":", start, end);
   print_json_string_to(fp, input->text + start);
 
   if (input->nprovenance != 0)
