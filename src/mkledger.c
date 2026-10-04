@@ -497,7 +497,8 @@ static int add_surface(char ***surfacev, size_t *n, size_t *cap,
 }
 
 static int add_token(Token **tokenv, size_t *n, size_t *cap,
-                     const char *surface, size_t sequence, size_t combine) {
+                     const char *surface, size_t sequence, size_t combine,
+                     size_t provenance) {
   Token *tmp;
   char *s;
 
@@ -519,6 +520,7 @@ static int add_token(Token **tokenv, size_t *n, size_t *cap,
   (*tokenv)[*n].surface = s;
   (*tokenv)[*n].sequence = sequence;
   (*tokenv)[*n].combine = combine;
+  (*tokenv)[*n].provenance = provenance;
   (*n)++;
 
   return 0;
@@ -930,7 +932,8 @@ static int append_provenance(Combine *combine, Provenance *provenance) {
 }
 
 static int add_combine(LedgerInput *in, const JsonRecord *record,
-                       const MkledgerConfig *config, size_t *combine_id) {
+                       const MkledgerConfig *config, size_t *combine_id,
+                       size_t *provenance_id) {
   Combine candidate = {0};
   Provenance provenance = {0};
   Combine *combine;
@@ -950,6 +953,7 @@ static int add_combine(LedgerInput *in, const JsonRecord *record,
       continue;
 
     free_combine(&candidate);
+    *provenance_id = combine->nprovenance;
 
     if (append_provenance(combine, &provenance) != 0) {
       free_provenance(&provenance);
@@ -971,6 +975,7 @@ static int add_combine(LedgerInput *in, const JsonRecord *record,
   combine = in->combinev + in->ncombines;
   *combine = candidate;
   in->ncombines++;
+  *provenance_id = combine->nprovenance;
 
   if (append_provenance(combine, &provenance) != 0) {
     in->ncombines--;
@@ -1064,6 +1069,7 @@ static int read_ledger(FILE *fp, const MkledgerConfig *config,
     size_t lineno = in->records + 1;
     size_t word_len;
     size_t combine_id;
+    size_t provenance_id;
 
     line[strcspn(line, "\n")] = '\0';
 
@@ -1072,7 +1078,7 @@ static int read_ledger(FILE *fp, const MkledgerConfig *config,
       return -1;
     }
 
-    if (add_combine(in, &record, config, &combine_id) != 0) {
+    if (add_combine(in, &record, config, &combine_id, &provenance_id) != 0) {
       fprintf(stderr, "cannot add combine at line %zu\n", lineno);
       free_json_record(&record);
       free_json_record(&prev);
@@ -1116,7 +1122,7 @@ static int read_ledger(FILE *fp, const MkledgerConfig *config,
     }
 
     if (add_token(&in->tokenv, &in->ntokens, &tokencap, trie->value,
-                  in->sequences - 1, combine_id) != 0) {
+                  in->sequences - 1, combine_id, provenance_id) != 0) {
       fprintf(stderr, "cannot add token at line %zu\n", lineno);
       free_json_record(&record);
       free_json_record(&prev);
@@ -1533,7 +1539,7 @@ static int write_occurrence_section(FILE *fp, const LedgerInput *in,
     return -1;
 
   section.magic = OCCURRENCE_MAGIC;
-  section.version = 1;
+  section.version = 2;
   section.noccurrences = (uint32_t)in->ntokens;
 
   if (fwrite(&section, sizeof section, 1, fp) != 1)
@@ -1546,12 +1552,14 @@ static int write_occurrence_section(FILE *fp, const LedgerInput *in,
     surface = find_surface(surfacev, unique_surfaces, token->surface);
 
     if (surface == SIZE_MAX || surface > UINT32_MAX ||
-        token->sequence > UINT32_MAX || token->combine > UINT32_MAX)
+        token->sequence > UINT32_MAX || token->combine > UINT32_MAX ||
+        token->provenance > UINT32_MAX)
       return -1;
 
     record.surface = (uint32_t)surface;
     record.sequence = (uint32_t)token->sequence;
     record.combine = (uint32_t)token->combine;
+    record.provenance = (uint32_t)token->provenance;
 
     if (fwrite(&record, sizeof record, 1, fp) != 1)
       return -1;
