@@ -1374,11 +1374,13 @@ static int monitor_ledger(const Ledger *ledger) {
 int main(int argc, char *argv[]) {
   Ledger ledger;
   MkledgerConfig config;
-  const char *config_path = "ledger-config.json";
+  const char *config_path = NULL;
   const char *path;
   int monitor = 0;
   int unresolved = 0;
   int opt;
+
+  memset(&config, 0, sizeof(config));
 
   while ((opt = getopt(argc, argv, "c:muh")) != -1) {
     switch (opt) {
@@ -1412,7 +1414,7 @@ int main(int argc, char *argv[]) {
 
   path = argv[optind];
 
-  if (load_mkledger_config(config_path, &config) != 0)
+  if (config_path != NULL && load_mkledger_config(config_path, &config) != 0)
     return EXIT_FAILURE;
 
   if (load_ledger(path, &ledger) != 0) {
