@@ -1425,8 +1425,97 @@ static int make_trie(Trie *trie, const LedgerInput *in,
   free(tokens);
   return 0;
 }
-static int write_ledger(const char *path, const Trie *trie, char **surfacev,
-                        size_t unique_surfaces) {
+static int write_field(FILE *fp, const JsonField *field) {
+  LedgerFieldHeader header;
+  size_t name_bytes = strlen(field->name) + 1;
+  size_t value_bytes = strlen(field->value) + 1;
+
+  if (name_bytes > UINT32_MAX || value_bytes > UINT32_MAX)
+    return -1;
+
+  header.type = (uint32_t)field->type;
+  header.name_bytes = (uint32_t)name_bytes;
+  header.value_bytes = (uint32_t)value_bytes;
+
+  if (fwrite(&header, sizeof header, 1, fp) != 1 ||
+      fwrite(field->name, 1, name_bytes, fp) != name_bytes ||
+      fwrite(field->value, 1, value_bytes, fp) != value_bytes)
+    return -1;
+
+  return 0;
+}
+
+static int write_combine_section(FILE *fp, const LedgerInput *in,
+                                 const MkledgerConfig *config,
+                                 char **surfacev, size_t unique_surfaces) {
+  CombineSectionHeader section;
+  const Combine *combine;
+
+  if (in->ncombines > UINT32_MAX)
+    return -1;
+
+  section.magic = COMBINE_MAGIC;
+  section.version = 1;
+  section.ncombines = (uint32_t)in->ncombines;
+
+  if (fwrite(&section, sizeof section, 1, fp) != 1)
+    return -1;
+
+  for (combine = in->combinev; combine < in->combinev + in->ncombines;
+       combine++) {
+    CombineRecordHeader record;
+    const JsonField *trie;
+    const JsonField *field;
+    const Provenance *provenance;
+    size_t surface;
+
+    trie = find_json_field_const((const JsonRecord *)combine,
+                                 config->ledger.trie);
+    if (trie == NULL)
+      return -1;
+
+    surface = find_surface(surfacev, unique_surfaces, trie->value);
+    if (surface == SIZE_MAX || surface > UINT32_MAX ||
+        combine->n > UINT32_MAX || combine->nprovenance > UINT32_MAX)
+      return -1;
+
+    record.surface = (uint32_t)surface;
+    record.nfields = (uint32_t)combine->n;
+    record.nprovenance = (uint32_t)combine->nprovenance;
+
+    if (fwrite(&record, sizeof record, 1, fp) != 1)
+      return -1;
+
+    for (field = combine->v; field < combine->v + combine->n; field++)
+      if (write_field(fp, field) != 0)
+        return -1;
+
+    for (provenance = combine->provenance;
+         provenance < combine->provenance + combine->nprovenance;
+         provenance++) {
+      ProvenanceRecordHeader provenance_header;
+
+      if (provenance->n > UINT32_MAX)
+        return -1;
+
+      provenance_header.nfields = (uint32_t)provenance->n;
+
+      if (fwrite(&provenance_header, sizeof provenance_header, 1, fp) != 1)
+        return -1;
+
+      for (field = provenance->v; field < provenance->v + provenance->n;
+           field++)
+        if (write_field(fp, field) != 0)
+          return -1;
+    }
+  }
+
+  return 0;
+}
+
+static int write_ledger(const char *path, const Trie *trie,
+                        const LedgerInput *in, const MkledgerConfig *config,
+                        char **surfacev, size_t unique_surfaces) {
   FILE *fp;
   LedgerHeader header;
 
@@ -1486,6 +1575,12 @@ static int write_ledger(const char *path, const Trie *trie, char **surfacev,
     }
   }
 
+  if (write_combine_section(fp, in, config, surfacev, unique_surfaces) != 0) {
+    fprintf(stderr, "cannot write combine section\n");
+    fclose(fp);
+    return -1;
+  }
+
   if (fclose(fp) != 0) {
     perror(path);
     return -1;
@@ -1494,8 +1589,8 @@ static int write_ledger(const char *path, const Trie *trie, char **surfacev,
   return 0;
 }
 
-static int mkledger(LedgerInput *in, int show_stats, int show_freq,
-                    int show_combine_record) {
+static int mkledger(LedgerInput *in, const MkledgerConfig *config,
+                    int show_stats, int show_freq, int show_combine_record) {
   size_t unique_surfaces = make_surface_table(in->surfacev, in->nsurfaces);
 
   PairTable pair_table =
@@ -1510,7 +1605,8 @@ static int mkledger(LedgerInput *in, int show_stats, int show_freq,
     return -1;
   }
 
-  if (write_ledger("ledger.dat", &trie, in->surfacev, unique_surfaces) != 0) {
+  if (write_ledger("ledger.dat", &trie, in, config, in->surfacev,
+                   unique_surfaces) != 0) {
     fprintf(stderr, "cannot write ledger.dat\n");
     trie_free(&trie);
     free_mem(in, &pair_table, unique_surfaces);
@@ -1624,10 +1720,11 @@ int main(int argc, char *argv[]) {
   if (fp != stdin)
     fclose(fp);
 
-  free_mkledger_config(&config);
-
-  if (mkledger(&in, show_stats, show_freq, show_combine_record) != 0)
+  if (mkledger(&in, &config, show_stats, show_freq, show_combine_record) != 0) {
+    free_mkledger_config(&config);
     return EXIT_FAILURE;
+  }
 
+  free_mkledger_config(&config);
   return EXIT_SUCCESS;
 }
