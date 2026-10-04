@@ -129,9 +129,11 @@ static void show_observed_paths(const Ledger *ledger, const char *input,
 static void free_sui_input(SuiInput *input);
 static int parse_sui_input(const char *line, const MkledgerConfig *config,
                            SuiInput *input);
-static void print_input_provenance(const SuiInput *input);
+static void print_input_provenance(FILE *fp, const SuiInput *input);
+static int emit_unresolved(FILE *fp, const SuiInput *input, size_t start,
+                           size_t end);
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
-                         int monitor, int unresolved);
+                         int monitor, int unresolved, int append_candy);
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b) {
@@ -1521,30 +1523,80 @@ static int parse_sui_input(const char *line, const MkledgerConfig *config,
   return 0;
 }
 
-static void print_input_provenance(const SuiInput *input) {
+static void print_json_string_to(FILE *fp, const char *s) {
+  const unsigned char *p;
+
+  fputc('"', fp);
+
+  for (p = (const unsigned char *)s; *p != '\0'; p++) {
+    switch (*p) {
+    case '"':
+      fputs("\\\"", fp);
+      break;
+    case '\\':
+      fputs("\\\\", fp);
+      break;
+    case '\b':
+      fputs("\\b", fp);
+      break;
+    case '\f':
+      fputs("\\f", fp);
+      break;
+    case '\n':
+      fputs("\\n", fp);
+      break;
+    case '\r':
+      fputs("\\r", fp);
+      break;
+    case '\t':
+      fputs("\\t", fp);
+      break;
+    default:
+      if (*p < 0x20)
+        fprintf(fp, "\\u%04x", *p);
+      else
+        fputc(*p, fp);
+    }
+  }
+
+  fputc('"', fp);
+}
+
+static void print_input_provenance(FILE *fp, const SuiInput *input) {
   const ContextField *field;
 
-  fputs(",\"provenance\":{", stdout);
+  fputs(",\"provenance\":{", fp);
 
   for (field = input->provenance;
        field < input->provenance + input->nprovenance; field++) {
     if (field != input->provenance)
-      putchar(',');
+      fputc(',', fp);
 
-    print_json_string(field->name);
-    putchar(':');
+    print_json_string_to(fp, field->name);
+    fputc(':', fp);
 
     if (field->type == CONTEXT_STRING)
-      print_json_string(field->value);
+      print_json_string_to(fp, field->value);
     else
-      fputs(field->value, stdout);
+      fputs(field->value, fp);
   }
 
-  putchar('}');
+  fputc('}', fp);
+}
+
+static int emit_unresolved(FILE *fp, const SuiInput *input, size_t start,
+                           size_t end) {
+  fprintf(fp, "{\"start\":%zu,\"end\":%zu,\"text\":", start, end);
+  print_json_string_to(fp, input->text + start);
+  if (input->nprovenance != 0)
+    print_input_provenance(fp, input);
+  fputs("}\n", fp);
+
+  return ferror(fp) ? -1 : 0;
 }
 
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
-                         int monitor, int unresolved) {
+                         int monitor, int unresolved, int append_candy) {
   char line[4096];
   SuiInput parsed;
   const char *input;
@@ -1589,11 +1641,27 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       size_t input_end = strlen(input);
 
       if (target_end < input_end) {
-        printf("{\"start\":%zu,\"end\":%zu,\"text\":", target_end, input_end);
-        print_json_string(input + target_end);
-        if (parsed.nprovenance != 0)
-          print_input_provenance(&parsed);
-        fputs("}\n", stdout);
+        if (emit_unresolved(stdout, &parsed, target_end, input_end) != 0) {
+          longest_path_list_free(&paths);
+          lattice_free(&lat);
+          free_sui_input(&parsed);
+          return -1;
+        }
+
+        if (append_candy) {
+          FILE *fp = fopen(config->candy.filename, "a");
+
+          if (fp == NULL ||
+              emit_unresolved(fp, &parsed, target_end, input_end) != 0 ||
+              fclose(fp) != 0) {
+            if (fp != NULL)
+              fclose(fp);
+            longest_path_list_free(&paths);
+            lattice_free(&lat);
+            free_sui_input(&parsed);
+            return -1;
+          }
+        }
       }
     } else if (emit_observed_paths(ledger, input, &lat, target_end) != 0) {
       longest_path_list_free(&paths);
@@ -1686,12 +1754,17 @@ int main(int argc, char *argv[]) {
   const char *path;
   int monitor = 0;
   int unresolved = 0;
+  int append_candy = 0;
   int opt;
 
   memset(&config, 0, sizeof(config));
 
-  while ((opt = getopt(argc, argv, "c:muh")) != -1) {
+  while ((opt = getopt(argc, argv, "ac:muh")) != -1) {
     switch (opt) {
+    case 'a':
+      append_candy = 1;
+      unresolved = 1;
+      break;
     case 'c':
       config_path = optarg;
       break;
@@ -1702,28 +1775,39 @@ int main(int argc, char *argv[]) {
       unresolved = 1;
       break;
     case 'h':
-      printf("usage: %s [-c config] [-m | -u] ledger.dat\n", argv[0]);
+      printf("usage: %s [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
       return EXIT_SUCCESS;
     default:
-      fprintf(stderr, "usage: %s [-c config] [-m | -u] ledger.dat\n", argv[0]);
+      fprintf(stderr, "usage: %s [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
       return EXIT_FAILURE;
     }
   }
 
   if (monitor && unresolved) {
-    fprintf(stderr, "usage: %s [-c config] [-m | -u] ledger.dat\n", argv[0]);
+    fprintf(stderr, "usage: %s [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
     return EXIT_FAILURE;
   }
 
   if (optind + 1 != argc) {
-    fprintf(stderr, "usage: %s [-c config] [-m | -u] ledger.dat\n", argv[0]);
+    fprintf(stderr, "usage: %s [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
     return EXIT_FAILURE;
   }
 
   path = argv[optind];
 
+  if (append_candy && config_path == NULL) {
+    fprintf(stderr, "-a requires -c config\n");
+    return EXIT_FAILURE;
+  }
+
   if (config_path != NULL && load_mkledger_config(config_path, &config) != 0)
     return EXIT_FAILURE;
+
+  if (append_candy && config.candy.filename == NULL) {
+    fprintf(stderr, "-a requires candy.filename in config\n");
+    free_mkledger_config(&config);
+    return EXIT_FAILURE;
+  }
 
   if (load_ledger(path, &ledger) != 0) {
     free_mkledger_config(&config);
@@ -1737,7 +1821,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (process_input(&ledger, config_path == NULL ? NULL : &config, monitor,
-                    unresolved) != 0) {
+                    unresolved, append_candy) != 0) {
     unload_ledger(&ledger);
     free_mkledger_config(&config);
     return EXIT_FAILURE;
