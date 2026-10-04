@@ -101,7 +101,7 @@ static int make_longest_paths(const Ledger *ledger, const char *input,
                               const Lattice *lat, LongestPathList *list);
 static void show_longest_paths(const char *input, const LongestPathList *list);
 static void show_reach(const LongestPathList *list);
-static int process_input(const Ledger *ledger);
+static int process_input(const Ledger *ledger, int emit_jsonl);
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b) {
@@ -472,6 +472,83 @@ static int count_ledger_provenance(const Ledger *ledger,
   return 0;
 }
 
+static void print_json_string(const char *s) {
+  const unsigned char *p;
+
+  putchar('"');
+
+  for (p = (const unsigned char *)s; *p != '\0'; p++) {
+    switch (*p) {
+    case '"':
+      fputs("\\\"", stdout);
+      break;
+    case '\\':
+      fputs("\\\\", stdout);
+      break;
+    case '\b':
+      fputs("\\b", stdout);
+      break;
+    case '\f':
+      fputs("\\f", stdout);
+      break;
+    case '\n':
+      fputs("\\n", stdout);
+      break;
+    case '\r':
+      fputs("\\r", stdout);
+      break;
+    case '\t':
+      fputs("\\t", stdout);
+      break;
+    default:
+      if (*p < 0x20)
+        printf("\\u%04x", *p);
+      else
+        putchar(*p);
+    }
+  }
+
+  putchar('"');
+}
+
+static const char *print_ledger_field_json(const char *p, const char *end) {
+  const LedgerFieldHeader *field;
+  const char *name;
+  const char *value;
+
+  if ((size_t)(end - p) < sizeof *field)
+    return NULL;
+
+  field = (const LedgerFieldHeader *)p;
+  p += sizeof *field;
+
+  if (field->name_bytes == 0 || field->name_bytes > (size_t)(end - p))
+    return NULL;
+  name = p;
+  p += field->name_bytes;
+
+  if (field->value_bytes == 0 || field->value_bytes > (size_t)(end - p))
+    return NULL;
+  value = p;
+  p += field->value_bytes;
+
+  if (name[field->name_bytes - 1] != '\0' ||
+      value[field->value_bytes - 1] != '\0')
+    return NULL;
+
+  print_json_string(name);
+  putchar(':');
+
+  if (field->type == 0)
+    print_json_string(value);
+  else if (field->type == 1)
+    fputs(value, stdout);
+  else
+    return NULL;
+
+  return p;
+}
+
 static const char *show_ledger_field(const char *p, const char *end,
                                      const char *indent) {
   const LedgerFieldHeader *field;
@@ -500,6 +577,102 @@ static const char *show_ledger_field(const char *p, const char *end,
 
   printf("%s%s: %s\n", indent, name, value);
   return p;
+}
+
+static int emit_surface_combines(const Ledger *ledger, uint32_t surface) {
+  const char *p = (const char *)(ledger->combine + 1);
+  const char *end = (const char *)ledger->map + ledger->size;
+  uint32_t i;
+
+  for (i = 0; i < ledger->combine->ncombines; i++) {
+    const CombineRecordHeader *combine;
+    const char *fields;
+    const char *provenances;
+    uint32_t j;
+
+    if ((size_t)(end - p) < sizeof *combine)
+      return -1;
+
+    combine = (const CombineRecordHeader *)p;
+    p += sizeof *combine;
+    fields = p;
+
+    for (j = 0; j < combine->nfields; j++) {
+      p = skip_ledger_field(p, end);
+      if (p == NULL)
+        return -1;
+    }
+
+    provenances = p;
+
+    for (j = 0; j < combine->nprovenance; j++) {
+      const ProvenanceRecordHeader *provenance;
+      uint32_t k;
+
+      if ((size_t)(end - p) < sizeof *provenance)
+        return -1;
+
+      provenance = (const ProvenanceRecordHeader *)p;
+      p += sizeof *provenance;
+
+      for (k = 0; k < provenance->nfields; k++) {
+        p = skip_ledger_field(p, end);
+        if (p == NULL)
+          return -1;
+      }
+    }
+
+    if (combine->surface != surface)
+      continue;
+
+    putchar('{');
+
+    {
+      const char *q = fields;
+
+      for (j = 0; j < combine->nfields; j++) {
+        if (j != 0)
+          putchar(',');
+
+        q = print_ledger_field_json(q, end);
+        if (q == NULL)
+          return -1;
+      }
+
+      fputs(",\"provenance\":[", stdout);
+      q = provenances;
+
+      for (j = 0; j < combine->nprovenance; j++) {
+        const ProvenanceRecordHeader *provenance;
+        uint32_t k;
+
+        if ((size_t)(end - q) < sizeof *provenance)
+          return -1;
+
+        provenance = (const ProvenanceRecordHeader *)q;
+        q += sizeof *provenance;
+
+        if (j != 0)
+          putchar(',');
+        putchar('{');
+
+        for (k = 0; k < provenance->nfields; k++) {
+          if (k != 0)
+            putchar(',');
+
+          q = print_ledger_field_json(q, end);
+          if (q == NULL)
+            return -1;
+        }
+
+        putchar('}');
+      }
+    }
+
+    fputs("]}\n", stdout);
+  }
+
+  return 0;
 }
 
 static int show_surface_combines(const Ledger *ledger, uint32_t surface) {
@@ -794,7 +967,7 @@ static void show_longest_paths(const char *input, const LongestPathList *list) {
   }
 }
 
-static int process_input(const Ledger *ledger) {
+static int process_input(const Ledger *ledger, int emit_jsonl) {
   char input[4096];
   Lattice lat;
 
@@ -808,6 +981,19 @@ static int process_input(const Ledger *ledger) {
   if (make_lattice(ledger, input, &lat) != 0) {
     lattice_free(&lat);
     return -1;
+  }
+
+  if (emit_jsonl) {
+    const LatticeEdge *edge;
+
+    for (edge = lat.v; edge < lat.v + lat.n; edge++)
+      if (emit_surface_combines(ledger, edge->surface) != 0) {
+        lattice_free(&lat);
+        return -1;
+      }
+
+    lattice_free(&lat);
+    return 0;
   }
 
   if (show_lattice_gaps(input, &lat) != 0) {
@@ -854,36 +1040,44 @@ static int process_input(const Ledger *ledger) {
 
 int main(int argc, char *argv[]) {
   Ledger ledger;
+  const char *path;
+  int emit_jsonl = 0;
 
-  if (argc != 2) {
-    fprintf(stderr, "usage: %s ledger.dat\n", argv[0]);
+  if (argc == 2) {
+    path = argv[1];
+  } else if (argc == 3 && strcmp(argv[1], "-j") == 0) {
+    emit_jsonl = 1;
+    path = argv[2];
+  } else {
+    fprintf(stderr, "usage: %s [-j] ledger.dat\n", argv[0]);
     return EXIT_FAILURE;
   }
 
-  if (load_ledger(argv[1], &ledger) != 0)
+  if (load_ledger(path, &ledger) != 0)
     return EXIT_FAILURE;
 
-  printf("version:         %u\n", ledger.header->version);
-  printf("trie nodes:      %u\n", ledger.header->trie_nodes);
-  printf("unique surfaces: %u\n", ledger.header->unique_surfaces);
-  printf("combines:        %u\n", ledger.combine->ncombines);
+  if (!emit_jsonl) {
+    printf("version:         %u\n", ledger.header->version);
+    printf("trie nodes:      %u\n", ledger.header->trie_nodes);
+    printf("unique surfaces: %u\n", ledger.header->unique_surfaces);
+    printf("combines:        %u\n", ledger.combine->ncombines);
 
-  uint32_t nprovenance;
+    uint32_t nprovenance;
 
-  if (count_ledger_provenance(&ledger, &nprovenance) != 0) {
-    fprintf(stderr, "invalid combine records\n");
-    unload_ledger(&ledger);
-    return EXIT_FAILURE;
+    if (count_ledger_provenance(&ledger, &nprovenance) != 0) {
+      fprintf(stderr, "invalid combine records\n");
+      unload_ledger(&ledger);
+      return EXIT_FAILURE;
+    }
+
+    printf("provenance:      %u\n", nprovenance);
+    printf("root token:      %u\n", ledger.trie[0].token);
+    printf("root child:      %u\n", ledger.trie[0].child);
+    printf("root sibling:    %u\n", ledger.trie[0].sibling);
+    printf("root freq:       %u\n", ledger.trie[0].freq);
   }
 
-  printf("provenance:      %u\n", nprovenance);
-
-  printf("root token:      %u\n", ledger.trie[0].token);
-  printf("root child:      %u\n", ledger.trie[0].child);
-  printf("root sibling:    %u\n", ledger.trie[0].sibling);
-  printf("root freq:       %u\n", ledger.trie[0].freq);
-
-  if (process_input(&ledger) != 0) {
+  if (process_input(&ledger, emit_jsonl) != 0) {
     unload_ledger(&ledger);
     return EXIT_FAILURE;
   }
