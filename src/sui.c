@@ -35,6 +35,8 @@ typedef struct {
   const CombineSectionHeader *combine;
   const OccurrenceSectionHeader *occurrence;
   const OccurrenceRecord *occurrencev;
+  uint32_t null_surface;
+  uint32_t current_max_surface;
 } Ledger;
 
 typedef struct {
@@ -913,6 +915,15 @@ static int load_ledger(const char *path, Ledger *ledger) {
     munmap(ledger->map, ledger->size);
     return -1;
   }
+
+  if (ledger->header->unique_surfaces > UINT32_MAX - 2) {
+    fprintf(stderr, "surface id space exhausted\n");
+    munmap(ledger->map, ledger->size);
+    return -1;
+  }
+
+  ledger->null_surface = ledger->header->unique_surfaces + 2;
+  ledger->current_max_surface = ledger->null_surface;
 
   ledger->trie =
       (const TrieNode *)((const char *)ledger->map + sizeof(LedgerHeader));
