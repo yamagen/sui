@@ -89,6 +89,10 @@ static void show_uncovered_adjacencies(const Ledger *ledger,
                                        const char *input, const Lattice *lat,
                                        const LongestPathList *list);
 
+static int schema_allows_type(const SchemaField *field, const char *type);
+static int is_provenance_name(const MkledgerConfig *config, const char *name);
+static void print_json_string_to(FILE *fp, const char *s);
+
 static void longest_path_list_init(LongestPathList *list);
 static void longest_path_list_free(LongestPathList *list);
 static int longest_path_list_add(LongestPathList *list,
