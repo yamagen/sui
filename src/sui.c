@@ -101,7 +101,7 @@ static int make_longest_paths(const Ledger *ledger, const char *input,
                               const Lattice *lat, LongestPathList *list);
 static void show_longest_paths(const char *input, const LongestPathList *list);
 static void show_reach(const LongestPathList *list);
-static int process_input(const Ledger *ledger, int emit_jsonl);
+static int process_input(const Ledger *ledger, int monitor);
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b) {
@@ -967,7 +967,7 @@ static void show_longest_paths(const char *input, const LongestPathList *list) {
   }
 }
 
-static int process_input(const Ledger *ledger, int emit_jsonl) {
+static int process_input(const Ledger *ledger, int monitor) {
   char input[4096];
   Lattice lat;
 
@@ -983,7 +983,7 @@ static int process_input(const Ledger *ledger, int emit_jsonl) {
     return -1;
   }
 
-  if (emit_jsonl) {
+  if (!monitor) {
     const LatticeEdge *edge;
 
     for (edge = lat.v; edge < lat.v + lat.n; edge++)
@@ -1041,28 +1041,40 @@ static int process_input(const Ledger *ledger, int emit_jsonl) {
 int main(int argc, char *argv[]) {
   Ledger ledger;
   const char *path;
-  int emit_jsonl = 0;
+  int monitor = 0;
+  int opt;
 
-  if (argc == 2) {
-    path = argv[1];
-  } else if (argc == 3 && strcmp(argv[1], "-j") == 0) {
-    emit_jsonl = 1;
-    path = argv[2];
-  } else {
-    fprintf(stderr, "usage: %s [-j] ledger.dat\n", argv[0]);
+  while ((opt = getopt(argc, argv, "mh")) != -1) {
+    switch (opt) {
+    case 'm':
+      monitor = 1;
+      break;
+    case 'h':
+      printf("usage: %s [-m] ledger.dat\n", argv[0]);
+      return EXIT_SUCCESS;
+    default:
+      fprintf(stderr, "usage: %s [-m] ledger.dat\n", argv[0]);
+      return EXIT_FAILURE;
+    }
+  }
+
+  if (optind + 1 != argc) {
+    fprintf(stderr, "usage: %s [-m] ledger.dat\n", argv[0]);
     return EXIT_FAILURE;
   }
+
+  path = argv[optind];
 
   if (load_ledger(path, &ledger) != 0)
     return EXIT_FAILURE;
 
-  if (!emit_jsonl) {
+  if (monitor) {
+    uint32_t nprovenance;
+
     printf("version:         %u\n", ledger.header->version);
     printf("trie nodes:      %u\n", ledger.header->trie_nodes);
     printf("unique surfaces: %u\n", ledger.header->unique_surfaces);
     printf("combines:        %u\n", ledger.combine->ncombines);
-
-    uint32_t nprovenance;
 
     if (count_ledger_provenance(&ledger, &nprovenance) != 0) {
       fprintf(stderr, "invalid combine records\n");
@@ -1077,7 +1089,7 @@ int main(int argc, char *argv[]) {
     printf("root freq:       %u\n", ledger.trie[0].freq);
   }
 
-  if (process_input(&ledger, emit_jsonl) != 0) {
+  if (process_input(&ledger, monitor) != 0) {
     unload_ledger(&ledger);
     return EXIT_FAILURE;
   }
