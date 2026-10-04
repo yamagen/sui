@@ -202,14 +202,14 @@ static int append_uncovered_adjacencies(const Ledger *ledger,
                                         const LongestPathList *list) {
   const LatticeEdge *a;
   const LatticeEdge *b;
+  const LatticeEdge *best_a = NULL;
+  const LatticeEdge *best_b = NULL;
+  const char *best_as = NULL;
+  const char *best_bs = NULL;
   FILE *fp;
 
   if (config == NULL || config->candy.filename == NULL)
     return 0;
-
-  fp = fopen(config->candy.filename, "a");
-  if (fp == NULL)
-    return -1;
 
   for (a = lat->v; a < lat->v + lat->n; a++) {
     for (b = lat->v; b < lat->v + lat->n; b++) {
@@ -231,15 +231,29 @@ static int append_uncovered_adjacencies(const Ledger *ledger,
       if (as == NULL || bs == NULL)
         continue;
 
-      if (emit_adjacency_work_row(fp, config, input, a, as) != 0 ||
-          emit_adjacency_work_row(fp, config, input, b, bs) != 0) {
-        fclose(fp);
-        return -1;
+      if (best_a == NULL || a->end - a->start > best_a->end - best_a->start) {
+        best_a = a;
+        best_b = b;
+        best_as = as;
+        best_bs = bs;
       }
     }
   }
 
-  return fclose(fp) == 0 ? 0 : -1;
+  if (best_a == NULL)
+    return 0;
+
+  fp = fopen(config->candy.filename, "a");
+  if (fp == NULL)
+    return -1;
+
+  if (emit_adjacency_work_row(fp, config, input, best_a, best_as) != 0 ||
+      emit_adjacency_work_row(fp, config, input, best_b, best_bs) != 0) {
+    fclose(fp);
+    return -1;
+  }
+
+  return fclose(fp) == 0 ? 1 : -1;
 }
 
 static bool reach_covers_adjacency(const LongestPathList *list,
@@ -2072,13 +2086,17 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       }
     }
 
-    if (append_candy &&
-        append_uncovered_adjacencies(ledger, config, &parsed, &lat, &paths) !=
-            0) {
-      longest_path_list_free(&paths);
-      lattice_free(&lat);
-      free_sui_input(&parsed);
-      return -1;
+    int appended_adjacency = 0;
+
+    if (append_candy) {
+      appended_adjacency =
+          append_uncovered_adjacencies(ledger, config, &parsed, &lat, &paths);
+      if (appended_adjacency < 0) {
+        longest_path_list_free(&paths);
+        lattice_free(&lat);
+        free_sui_input(&parsed);
+        return -1;
+      }
     }
 
     if (unresolved) {
@@ -2092,7 +2110,7 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           return -1;
         }
 
-        if (append_candy) {
+        if (append_candy && !appended_adjacency) {
           FILE *fp = fopen(config->candy.filename, "a");
           int status;
 
