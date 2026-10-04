@@ -172,7 +172,7 @@ static void print_adjacency_work_row(const MkledgerConfig *config,
   int wrote_field = 0;
   int wrote_word = 0;
 
-  putchar('{');
+  fputs("!{", stdout);
 
   if (config != NULL) {
     for (field = config->schema.v; field < config->schema.v + config->schema.n;
