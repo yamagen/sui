@@ -23,12 +23,17 @@ typedef struct {
 } Schema;
 
 typedef struct {
+  char *filename;
+} CandyConfig;
+
+typedef struct {
   char *version;
   char *filename;
   LedgerConfig ledger;
   Schema schema;
   char **provenance;
   size_t nprovenance;
+  CandyConfig candy;
 } MkledgerConfig;
 
 typedef enum {
@@ -37,6 +42,7 @@ typedef enum {
   CONFIG_LEDGER,
   CONFIG_SCHEMA,
   CONFIG_PROVENANCE,
+  CONFIG_CANDY,
   CONFIG_UNKNOWN
 } ConfigKey;
 
@@ -53,5 +59,6 @@ void free_mkledger_config(MkledgerConfig *config);
 int load_mkledger_config(const char *path, MkledgerConfig *config);
 void parse_ledger_config(tjson_t *json, LedgerConfig *ledger);
 void parse_schema_config(tjson_t *json, Schema *schema);
+void parse_candy_config(tjson_t *json, CandyConfig *candy);
 
 #endif
