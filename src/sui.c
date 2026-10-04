@@ -103,6 +103,9 @@ static int make_longest_paths(const Ledger *ledger, const char *input,
                               const Lattice *lat, LongestPathList *list);
 static void show_longest_paths(const char *input, const LongestPathList *list);
 static void show_reach(const LongestPathList *list);
+static void show_occurrence_adjacencies(const Ledger *ledger,
+                                         const char *input,
+                                         const Lattice *lat);
 static int process_input(const Ledger *ledger, int monitor);
 
 static bool reach_covers_adjacency(const LongestPathList *list,
@@ -1035,6 +1038,42 @@ static void show_longest_paths(const char *input, const LongestPathList *list) {
   }
 }
 
+static void show_occurrence_adjacencies(const Ledger *ledger,
+                                         const char *input,
+                                         const Lattice *lat) {
+  const LatticeEdge *left;
+  const LatticeEdge *right;
+  const OccurrenceRecord *occurrence;
+  const OccurrenceRecord *end;
+
+  end = ledger->occurrencev + ledger->occurrence->noccurrences;
+
+  for (left = lat->v; left < lat->v + lat->n; left++) {
+    for (right = lat->v; right < lat->v + lat->n; right++) {
+      if (!lattice_edges_connect(input, left, right))
+        continue;
+
+      for (occurrence = ledger->occurrencev; occurrence + 1 < end;
+           occurrence++) {
+        const OccurrenceRecord *next = occurrence + 1;
+
+        if (occurrence->sequence != next->sequence)
+          continue;
+
+        if (occurrence->surface != left->surface ||
+            next->surface != right->surface)
+          continue;
+
+        printf("occurrence adjacency\tsequence=%u\tcombine=%u→%u\t%s→%s\n",
+               occurrence->sequence, occurrence->combine, next->combine,
+               ledger->surface_strings +
+                   ledger->surface_offset[occurrence->surface],
+               ledger->surface_strings + ledger->surface_offset[next->surface]);
+      }
+    }
+  }
+}
+
 static int process_input(const Ledger *ledger, int monitor) {
   char input[4096];
   Lattice lat;
@@ -1085,6 +1124,7 @@ static int process_input(const Ledger *ledger, int monitor) {
   }
 
   show_paths(ledger, input, &lat);
+  show_occurrence_adjacencies(ledger, input, &lat);
 
   LongestPathList paths;
 
