@@ -132,6 +132,9 @@ static int parse_sui_input(const char *line, const MkledgerConfig *config,
 static void print_input_provenance(FILE *fp, const SuiInput *input);
 static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
                            const SuiInput *input, size_t start, size_t end);
+static int scan_candy_surface(const MkledgerConfig *config,
+                              const char *input, size_t start,
+                              size_t *matched_end);
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy);
 
@@ -1613,6 +1616,53 @@ static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
   return ferror(fp) ? -1 : 0;
 }
 
+static int scan_candy_surface(const MkledgerConfig *config,
+                              const char *input, size_t start,
+                              size_t *matched_end) {
+  FILE *fp;
+  char line[4096];
+  size_t input_end = strlen(input);
+  int found = 0;
+
+  *matched_end = start;
+
+  if (config == NULL || config->candy.filename == NULL)
+    return 0;
+
+  fp = fopen(config->candy.filename, "r");
+  if (fp == NULL)
+    return 0;
+
+  while (fgets(line, sizeof line, fp) != NULL) {
+    SuiInput candy;
+    size_t len;
+
+    line[strcspn(line, "\r\n")] = '\0';
+
+    if (line[0] != '!')
+      continue;
+
+    if (parse_sui_input(line + 1, config, &candy) != 0)
+      continue;
+
+    len = strlen(candy.text);
+
+    if (len != 0 && start + len <= input_end &&
+        memcmp(input + start, candy.text, len) == 0 &&
+        start + len > *matched_end) {
+      *matched_end = start + len;
+      found = 1;
+    }
+
+    free_sui_input(&candy);
+  }
+
+  if (fclose(fp) != 0)
+    return -1;
+
+  return found;
+}
+
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy) {
   char line[4096];
@@ -1654,6 +1704,36 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
     for (path = paths.v; path < paths.v + paths.n; path++)
       if (path->start == 0 && path->end > target_end)
         target_end = path->end;
+
+    if (config != NULL && config->candy.filename != NULL) {
+      size_t input_end = strlen(input);
+
+      while (target_end < input_end) {
+        size_t candy_end;
+        size_t known_end;
+        int candy_status =
+            scan_candy_surface(config, input, target_end, &candy_end);
+
+        if (candy_status < 0) {
+          longest_path_list_free(&paths);
+          lattice_free(&lat);
+          free_sui_input(&parsed);
+          return -1;
+        }
+
+        if (candy_status == 0)
+          break;
+
+        target_end = candy_end;
+        known_end = target_end;
+
+        for (path = paths.v; path < paths.v + paths.n; path++)
+          if (path->start == target_end && path->end > known_end)
+            known_end = path->end;
+
+        target_end = known_end;
+      }
+    }
 
     if (unresolved) {
       size_t input_end = strlen(input);
