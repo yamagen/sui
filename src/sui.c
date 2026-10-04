@@ -130,8 +130,8 @@ static void free_sui_input(SuiInput *input);
 static int parse_sui_input(const char *line, const MkledgerConfig *config,
                            SuiInput *input);
 static void print_input_provenance(FILE *fp, const SuiInput *input);
-static int emit_unresolved(FILE *fp, const SuiInput *input, size_t start,
-                           size_t end);
+static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
+                           const SuiInput *input, size_t start, size_t end);
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy);
 
@@ -1584,14 +1584,32 @@ static void print_input_provenance(FILE *fp, const SuiInput *input) {
   fputc('}', fp);
 }
 
-static int emit_unresolved(FILE *fp, const SuiInput *input, size_t start,
-                           size_t end) {
+static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
+                           const SuiInput *input, size_t start, size_t end) {
+  const SchemaField *field;
+
   fprintf(fp, "{\"start\":%zu,\"end\":%zu,\"text\":", start, end);
   print_json_string_to(fp, input->text + start);
+
   if (input->nprovenance != 0)
     print_input_provenance(fp, input);
-  fputs("}\n", fp);
 
+  if (config != NULL) {
+    for (field = config->schema.v; field < config->schema.v + config->schema.n;
+         field++) {
+      if (is_provenance_name(config, field->field))
+        continue;
+
+      if (!schema_allows_type(field, "string"))
+        continue;
+
+      fputc(',', fp);
+      print_json_string_to(fp, field->field);
+      fputs(":\"\"", fp);
+    }
+  }
+
+  fputs("}\n", fp);
   return ferror(fp) ? -1 : 0;
 }
 
@@ -1641,7 +1659,7 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       size_t input_end = strlen(input);
 
       if (target_end < input_end) {
-        if (emit_unresolved(stdout, &parsed, target_end, input_end) != 0) {
+        if (emit_unresolved(stdout, config, &parsed, target_end, input_end) != 0) {
           longest_path_list_free(&paths);
           lattice_free(&lat);
           free_sui_input(&parsed);
@@ -1659,7 +1677,7 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
             return -1;
           }
 
-          status = emit_unresolved(fp, &parsed, target_end, input_end);
+          status = emit_unresolved(fp, config, &parsed, target_end, input_end);
           if (fclose(fp) != 0)
             status = -1;
 
