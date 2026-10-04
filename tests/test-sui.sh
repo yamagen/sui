@@ -110,4 +110,9 @@ jq -e '
 ' >/dev/null ||
   fail "candy append"
 
+reused=$(printf '%s\n' '男につきて何か' |
+  "$SUI" -c "$candy_config" -u "$LEDGER")
+[ -z "$reused" ] ||
+  fail "candy surface reuse"
+
 echo "PASS: sui regression tests"
