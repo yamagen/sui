@@ -1,12 +1,12 @@
+#include "mkledger.h"
 #include "ledger.h"
+#include "tiny-json.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#define LINE_SIZE 4096
-#define NFIELDS 5
 #define VERSION "0.1.0"
 
 typedef struct {
@@ -14,11 +14,6 @@ typedef struct {
   size_t n;
   size_t cap;
 } Trie;
-
-typedef struct {
-  char left[LINE_SIZE];
-  char right[LINE_SIZE];
-} Pair;
 
 typedef struct {
   size_t left;
@@ -33,22 +28,112 @@ typedef struct {
   size_t max_freq;
 } PairTable;
 
-typedef struct {
-  char *surface;
-  size_t sequence;
-} Token;
+char *parse_integer_string(tjson_t *json) {
+  size_t start = json->pos;
+  size_t end;
+  const char *p;
 
-typedef struct {
-  size_t records;
-  size_t sequences;
-  size_t pairs;
-  Pair *pairv;
-  size_t max_word_len;
-  char **surfacev;
-  size_t nsurfaces;
-  Token *tokenv;
-  size_t ntokens;
-} LedgerInput;
+  (void)tjson_parse_number(json);
+  end = json->pos;
+
+  for (p = json->text + start; p < json->text + end; p++)
+    if (*p == '.' || *p == 'e' || *p == 'E')
+      return NULL;
+
+  return strndup(json->text + start, end - start);
+}
+
+ConfigKey get_config_key(const char *name) {
+  static const ConfigKeyMap map[] = {
+      {"version", CONFIG_VERSION},       {"filename", CONFIG_FILENAME},
+      {"ledger", CONFIG_LEDGER},         {"schema", CONFIG_SCHEMA},
+      {"provenance", CONFIG_PROVENANCE},
+  };
+  const ConfigKeyMap *p;
+
+  for (p = map; p < map + sizeof(map) / sizeof(*map); p++)
+    if (strcmp(name, p->name) == 0)
+      return p->key;
+
+  return CONFIG_UNKNOWN;
+}
+
+void monitor_config(const MkledgerConfig *config) {
+  const SchemaField *field;
+  char **type;
+  char **ignore;
+
+  printf("version: %s\n", config->version);
+  printf("filename: %s\n", config->filename);
+  printf("ledger.sequence: %s\n", config->ledger.sequence);
+  printf("ledger.trie: %s\n", config->ledger.trie);
+
+  printf("ledger.ignore:");
+  for (ignore = config->ledger.ignore;
+       ignore < config->ledger.ignore + config->ledger.nignore; ignore++)
+    printf(" %s", *ignore);
+  putchar('\n');
+
+  printf("schema: %zu\n", config->schema.n);
+
+  for (field = config->schema.v; field < config->schema.v + config->schema.n;
+       field++) {
+    printf("%s:", field->field);
+
+    for (type = field->types; type < field->types + field->ntypes; type++)
+      printf(" %s", *type);
+
+    putchar('\n');
+  }
+
+  printf("provenance:");
+  for (type = config->provenance;
+       type < config->provenance + config->nprovenance; type++)
+    printf(" %s", *type);
+  putchar('\n');
+}
+
+void parse_string_array(tjson_t *json, char ***values, size_t *nvalues) {
+  char **v = NULL;
+  size_t n = 0;
+
+  tjson_expect(json, '[');
+
+  for (;;) {
+    char **p;
+
+    tjson_skip_ws(json);
+
+    if (tjson_peek(json) == ']') {
+      tjson_expect(json, ']');
+      break;
+    }
+
+    p = realloc(v, (n + 1) * sizeof(*v));
+    if (p == NULL) {
+      free(v);
+      return;
+    }
+
+    v = p;
+    v[n++] = tjson_parse_string(json);
+
+    tjson_skip_ws(json);
+
+    if (tjson_peek(json) == ',') {
+      tjson_expect(json, ',');
+      continue;
+    }
+
+    if (tjson_peek(json) == ']') {
+      tjson_expect(json, ']');
+      break;
+    }
+  }
+
+  *values = v;
+  *nvalues = n;
+}
 
 static void trie_free(Trie *trie) {
   free(trie->v);
@@ -61,6 +146,266 @@ static void trie_init(Trie *trie) {
   trie->v = NULL;
   trie->n = 0;
   trie->cap = 0;
+}
+
+char *read_file(const char *path) {
+  FILE *fp;
+  long size;
+  char *text;
+
+  fp = fopen(path, "rb");
+  if (fp == NULL) {
+    perror(path);
+    return NULL;
+  }
+
+  if (fseek(fp, 0, SEEK_END) != 0) {
+    fclose(fp);
+    return NULL;
+  }
+
+  size = ftell(fp);
+  if (size < 0) {
+    fclose(fp);
+    return NULL;
+  }
+
+  rewind(fp);
+
+  text = malloc((size_t)size + 1);
+  if (text == NULL) {
+    fclose(fp);
+    return NULL;
+  }
+
+  if (fread(text, 1, (size_t)size, fp) != (size_t)size) {
+    free(text);
+    fclose(fp);
+    return NULL;
+  }
+
+  text[size] = '\0';
+  fclose(fp);
+
+  return text;
+}
+void free_mkledger_config(MkledgerConfig *config) {
+  char **p;
+
+  free(config->version);
+  free(config->filename);
+  free(config->ledger.sequence);
+  free(config->ledger.trie);
+
+  for (p = config->ledger.ignore;
+       p < config->ledger.ignore + config->ledger.nignore; p++)
+    free(*p);
+
+  free(config->ledger.ignore);
+
+  {
+    SchemaField *field;
+
+    for (field = config->schema.v; field < config->schema.v + config->schema.n;
+         field++) {
+      char **type;
+
+      free(field->field);
+
+      for (type = field->types; type < field->types + field->ntypes; type++)
+        free(*type);
+
+      free(field->types);
+    }
+  }
+
+  free(config->schema.v);
+
+  for (p = config->provenance; p < config->provenance + config->nprovenance; p++)
+    free(*p);
+
+  free(config->provenance);
+
+  memset(config, 0, sizeof(*config));
+}
+
+int load_mkledger_config(const char *path, MkledgerConfig *config) {
+  char *text;
+  tjson_t json;
+
+  memset(config, 0, sizeof(*config));
+
+  text = read_file(path);
+  if (text == NULL)
+    return -1;
+
+  tjson_init(&json, path, text);
+  tjson_skip_ws(&json);
+  tjson_expect(&json, '{');
+
+  for (;;) {
+    char *key;
+
+    tjson_skip_ws(&json);
+
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    key = tjson_parse_string(&json);
+    tjson_skip_ws(&json);
+    tjson_expect(&json, ':');
+
+    switch (get_config_key(key)) {
+    case CONFIG_VERSION:
+      config->version = tjson_parse_string(&json);
+      break;
+
+    case CONFIG_FILENAME:
+      config->filename = tjson_parse_string(&json);
+      break;
+
+    case CONFIG_LEDGER:
+      parse_ledger_config(&json, &config->ledger);
+      break;
+
+    case CONFIG_SCHEMA:
+      parse_schema_config(&json, &config->schema);
+      break;
+
+    case CONFIG_PROVENANCE:
+      parse_string_array(&json, &config->provenance, &config->nprovenance);
+      break;
+
+    case CONFIG_UNKNOWN:
+      tjson_skip_value(&json);
+      break;
+    }
+
+    free(key);
+
+    tjson_skip_ws(&json);
+
+    if (tjson_peek(&json) == ',') {
+      tjson_expect(&json, ',');
+      continue;
+    }
+
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+  }
+
+  tjson_skip_ws(&json);
+
+  if (json.pos != json.length) {
+    free(text);
+    return -1;
+  }
+
+  free(text);
+  return 0;
+}
+
+void parse_ledger_config(tjson_t *json, LedgerConfig *ledger) {
+  tjson_expect(json, '{');
+
+  for (;;) {
+    char *key;
+
+    tjson_skip_ws(json);
+
+    if (tjson_peek(json) == '}') {
+      tjson_expect(json, '}');
+      return;
+    }
+
+    key = tjson_parse_string(json);
+    tjson_skip_ws(json);
+    tjson_expect(json, ':');
+
+    if (strcmp(key, "sequence") == 0)
+      ledger->sequence = tjson_parse_string(json);
+    else if (strcmp(key, "trie") == 0)
+      ledger->trie = tjson_parse_string(json);
+    else if (strcmp(key, "ignore") == 0)
+      parse_string_array(json, &ledger->ignore, &ledger->nignore);
+    else
+      tjson_skip_value(json);
+
+    free(key);
+
+    tjson_skip_ws(json);
+
+    if (tjson_peek(json) == ',') {
+      tjson_expect(json, ',');
+      continue;
+    }
+
+    if (tjson_peek(json) == '}') {
+      tjson_expect(json, '}');
+      return;
+    }
+  }
+}
+
+void parse_schema_config(tjson_t *json, Schema *schema) {
+  tjson_expect(json, '{');
+
+  for (;;) {
+    SchemaField *field;
+    SchemaField *p;
+
+    tjson_skip_ws(json);
+
+    if (tjson_peek(json) == '}') {
+      tjson_expect(json, '}');
+      return;
+    }
+
+    p = realloc(schema->v, (schema->n + 1) * sizeof *schema->v);
+    if (p == NULL)
+      return;
+
+    schema->v = p;
+    field = schema->v + schema->n;
+    memset(field, 0, sizeof *field);
+
+    field->field = tjson_parse_string(json);
+
+    tjson_skip_ws(json);
+    tjson_expect(json, ':');
+    tjson_skip_ws(json);
+
+    if (tjson_peek(json) == '[') {
+      parse_string_array(json, &field->types, &field->ntypes);
+    } else {
+      field->types = malloc(sizeof *field->types);
+      if (field->types == NULL) {
+        free(field->field);
+        return;
+      }
+
+      field->types[0] = tjson_parse_string(json);
+      field->ntypes = 1;
+    }
+
+    schema->n++;
+
+    tjson_skip_ws(json);
+
+    if (tjson_peek(json) == ',') {
+      tjson_expect(json, ',');
+      continue;
+    }
+
+    if (tjson_peek(json) == '}') {
+      tjson_expect(json, '}');
+      return;
+    }
+  }
 }
 
 static int trie_add_node(Trie *trie, uint32_t token) {
@@ -196,10 +541,513 @@ static size_t find_surface(char **surfacev, size_t n, const char *surface) {
   return (size_t)(found - surfacev);
 }
 
-static int read_ledger(FILE *fp, LedgerInput *in) {
+void free_json_record(JsonRecord *record) {
+  JsonField *field;
+
+  for (field = record->v; field < record->v + record->n; field++) {
+    free(field->name);
+    free(field->value);
+  }
+
+  free(record->v);
+  record->v = NULL;
+  record->n = 0;
+}
+
+JsonField *find_json_field(JsonRecord *record, const char *name) {
+  JsonField *field;
+
+  for (field = record->v; field < record->v + record->n; field++)
+    if (strcmp(field->name, name) == 0)
+      return field;
+
+  return NULL;
+}
+
+const JsonField *find_json_field_const(const JsonRecord *record,
+                                       const char *name) {
+  const JsonField *field;
+
+  for (field = record->v; field < record->v + record->n; field++)
+    if (strcmp(field->name, name) == 0)
+      return field;
+
+  return NULL;
+}
+
+static const SchemaField *find_schema_field(const Schema *schema,
+                                            const char *name) {
+  const SchemaField *field;
+
+  for (field = schema->v; field < schema->v + schema->n; field++)
+    if (strcmp(field->field, name) == 0)
+      return field;
+
+  return NULL;
+}
+
+static const char *json_type_name(JsonType type) {
+  switch (type) {
+  case JSON_STRING:
+    return "string";
+  case JSON_INTEGER:
+    return "integer";
+  }
+
+  return NULL;
+}
+
+static bool schema_accepts_type(const SchemaField *field, JsonType type) {
+  char **p;
+  const char *name = json_type_name(type);
+
+  if (name == NULL)
+    return false;
+
+  for (p = field->types; p < field->types + field->ntypes; p++)
+    if (strcmp(*p, name) == 0)
+      return true;
+
+  return false;
+}
+
+static int add_json_field(tjson_t *json, const char *name, size_t lineno,
+                          const SchemaField *schema, JsonRecord *record) {
+  JsonField *tmp;
+  JsonField *field;
+  JsonType type;
+  char *value;
+
+  if (find_json_field(record, name) != NULL) {
+    fprintf(stderr, "duplicate %s at line %zu\n", name, lineno);
+    return -1;
+  }
+
+  if (tjson_peek(json) == '"') {
+    type = JSON_STRING;
+    value = tjson_parse_string(json);
+  } else {
+    type = JSON_INTEGER;
+    value = parse_integer_string(json);
+  }
+
+  if (value == NULL) {
+    fprintf(stderr, "invalid integer for %s at line %zu\n", name, lineno);
+    return -1;
+  }
+
+  if (!schema_accepts_type(schema, type)) {
+    fprintf(stderr, "invalid type for %s at line %zu\n", name, lineno);
+    free(value);
+    return -1;
+  }
+
+  tmp = realloc(record->v, (record->n + 1) * sizeof *record->v);
+  if (tmp == NULL) {
+    free(value);
+    return -1;
+  }
+
+  record->v = tmp;
+  field = record->v + record->n;
+  field->name = strdup(name);
+  if (field->name == NULL) {
+    free(value);
+    return -1;
+  }
+
+  field->type = type;
+  field->value = value;
+  record->n++;
+
+  return 0;
+}
+
+int parse_json_record(const char *line, size_t lineno,
+                      const MkledgerConfig *config, JsonRecord *record) {
+  tjson_t json;
+  char path[64];
+
+  memset(record, 0, sizeof *record);
+
+  snprintf(path, sizeof path, "line %zu", lineno);
+  tjson_init(&json, path, line);
+
+  tjson_skip_ws(&json);
+  tjson_expect(&json, '{');
+
+  for (;;) {
+    char *key;
+    const SchemaField *schema;
+
+    tjson_skip_ws(&json);
+
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    key = tjson_parse_string(&json);
+
+    tjson_skip_ws(&json);
+    tjson_expect(&json, ':');
+    tjson_skip_ws(&json);
+
+    schema = find_schema_field(&config->schema, key);
+
+    if (schema == NULL) {
+      tjson_skip_value(&json);
+    } else if (add_json_field(&json, key, lineno, schema, record) != 0) {
+      free(key);
+      free_json_record(record);
+      return -1;
+    }
+
+    free(key);
+    tjson_skip_ws(&json);
+
+    if (tjson_peek(&json) == ',') {
+      tjson_expect(&json, ',');
+      continue;
+    }
+
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    fprintf(stderr, "invalid JSON object at line %zu\n", lineno);
+    free_json_record(record);
+    return -1;
+  }
+
+  tjson_skip_ws(&json);
+
+  if (json.pos != json.length) {
+    fprintf(stderr, "trailing content at line %zu\n", lineno);
+    free_json_record(record);
+    return -1;
+  }
+
+  {
+    const SchemaField *field;
+
+    for (field = config->schema.v; field < config->schema.v + config->schema.n;
+         field++) {
+      if (find_json_field_const(record, field->field) == NULL) {
+        fprintf(stderr, "missing %s at line %zu\n", field->field, lineno);
+        free_json_record(record);
+        return -1;
+      }
+    }
+  }
+
+  return 0;
+}
+
+static bool is_provenance_field(const MkledgerConfig *config,
+                                const char *name) {
+  char **field;
+
+  for (field = config->provenance;
+       field < config->provenance + config->nprovenance; field++)
+    if (strcmp(*field, name) == 0)
+      return true;
+
+  return false;
+}
+
+static void free_provenance(Provenance *provenance) {
+  JsonField *field;
+
+  for (field = provenance->v; field < provenance->v + provenance->n; field++) {
+    free(field->name);
+    free(field->value);
+  }
+
+  free(provenance->v);
+  provenance->v = NULL;
+  provenance->n = 0;
+}
+
+static void free_combine(Combine *combine) {
+  JsonField *field;
+  Provenance *provenance;
+
+  for (field = combine->v; field < combine->v + combine->n; field++) {
+    free(field->name);
+    free(field->value);
+  }
+
+  for (provenance = combine->provenance;
+       provenance < combine->provenance + combine->nprovenance; provenance++)
+    free_provenance(provenance);
+
+  free(combine->v);
+  free(combine->provenance);
+
+  combine->v = NULL;
+  combine->n = 0;
+  combine->provenance = NULL;
+  combine->nprovenance = 0;
+}
+
+static int copy_json_field(JsonField *dst, const JsonField *src) {
+  dst->name = strdup(src->name);
+  dst->value = strdup(src->value);
+  dst->type = src->type;
+
+  if (dst->name == NULL || dst->value == NULL) {
+    free(dst->name);
+    free(dst->value);
+    dst->name = NULL;
+    dst->value = NULL;
+    return -1;
+  }
+
+  return 0;
+}
+
+static int make_provenance(const JsonRecord *record,
+                           const MkledgerConfig *config,
+                           Provenance *provenance) {
+  char **name;
+
+  memset(provenance, 0, sizeof *provenance);
+
+  if (config->nprovenance == 0)
+    return 0;
+
+  provenance->v = calloc(config->nprovenance, sizeof *provenance->v);
+  if (provenance->v == NULL)
+    return -1;
+
+  for (name = config->provenance;
+       name < config->provenance + config->nprovenance; name++) {
+    const JsonField *field = find_json_field_const(record, *name);
+
+    if (field == NULL) {
+      fprintf(stderr, "provenance field %s is not in record\n", *name);
+      free_provenance(provenance);
+      return -1;
+    }
+
+    if (copy_json_field(provenance->v + provenance->n, field) != 0) {
+      free_provenance(provenance);
+      return -1;
+    }
+
+    provenance->n++;
+  }
+
+  return 0;
+}
+
+static int make_combine_fields(const JsonRecord *record,
+                               const MkledgerConfig *config,
+                               Combine *combine) {
+  const SchemaField *schema;
+  size_t n = 0;
+
+  memset(combine, 0, sizeof *combine);
+
+  for (schema = config->schema.v; schema < config->schema.v + config->schema.n;
+       schema++)
+    if (!is_provenance_field(config, schema->field))
+      n++;
+
+  if (n == 0)
+    return 0;
+
+  combine->v = calloc(n, sizeof *combine->v);
+  if (combine->v == NULL)
+    return -1;
+
+  for (schema = config->schema.v; schema < config->schema.v + config->schema.n;
+       schema++) {
+    const JsonField *field;
+
+    if (is_provenance_field(config, schema->field))
+      continue;
+
+    field = find_json_field_const(record, schema->field);
+    if (field == NULL) {
+      fprintf(stderr, "combine field %s is not in record\n", schema->field);
+      free_combine(combine);
+      return -1;
+    }
+
+    if (copy_json_field(combine->v + combine->n, field) != 0) {
+      free_combine(combine);
+      return -1;
+    }
+
+    combine->n++;
+  }
+
+  return 0;
+}
+
+static bool same_combine_fields(const Combine *left, const Combine *right) {
+  const JsonField *a;
+  const JsonField *b;
+
+  if (left->n != right->n)
+    return false;
+
+  a = left->v;
+  b = right->v;
+
+  while (a < left->v + left->n) {
+    if (a->type != b->type || strcmp(a->name, b->name) != 0 ||
+        strcmp(a->value, b->value) != 0)
+      return false;
+
+    a++;
+    b++;
+  }
+
+  return true;
+}
+
+static int append_provenance(Combine *combine, Provenance *provenance) {
+  Provenance *tmp;
+
+  tmp = realloc(combine->provenance,
+                (combine->nprovenance + 1) * sizeof *combine->provenance);
+  if (tmp == NULL)
+    return -1;
+
+  combine->provenance = tmp;
+  combine->provenance[combine->nprovenance] = *provenance;
+  combine->nprovenance++;
+
+  provenance->v = NULL;
+  provenance->n = 0;
+
+  return 0;
+}
+
+static int add_combine(LedgerInput *in, const JsonRecord *record,
+                       const MkledgerConfig *config) {
+  Combine candidate = {0};
+  Provenance provenance = {0};
+  Combine *combine;
+  Combine *tmp;
+
+  if (make_combine_fields(record, config, &candidate) != 0)
+    return -1;
+
+  if (make_provenance(record, config, &provenance) != 0) {
+    free_combine(&candidate);
+    return -1;
+  }
+
+  for (combine = in->combinev; combine < in->combinev + in->ncombines;
+       combine++) {
+    if (!same_combine_fields(combine, &candidate))
+      continue;
+
+    free_combine(&candidate);
+
+    if (append_provenance(combine, &provenance) != 0) {
+      free_provenance(&provenance);
+      return -1;
+    }
+
+    return 0;
+  }
+
+  tmp = realloc(in->combinev, (in->ncombines + 1) * sizeof *in->combinev);
+  if (tmp == NULL) {
+    free_combine(&candidate);
+    free_provenance(&provenance);
+    return -1;
+  }
+
+  in->combinev = tmp;
+  combine = in->combinev + in->ncombines;
+  *combine = candidate;
+  in->ncombines++;
+
+  if (append_provenance(combine, &provenance) != 0) {
+    in->ncombines--;
+    free_combine(combine);
+    return -1;
+  }
+
+  return 0;
+}
+
+bool same_sequence(const JsonRecord *a, const JsonRecord *b,
+                   const MkledgerConfig *config) {
+  const JsonField *left;
+  const JsonField *right;
+
+  left = find_json_field_const(a, config->ledger.sequence);
+  right = find_json_field_const(b, config->ledger.sequence);
+
+  if (left == NULL || right == NULL || left->type != right->type)
+    return false;
+
+  return strcmp(left->value, right->value) == 0;
+}
+
+int add_record_pair(LedgerInput *in, JsonRecord *record, JsonRecord *prev,
+                    const MkledgerConfig *config, char *prev_word,
+                    bool *have_prev, size_t *paircap) {
+  const JsonField *sequence;
+  const JsonField *trie;
+
+  sequence = find_json_field_const(record, config->ledger.sequence);
+  trie = find_json_field_const(record, config->ledger.trie);
+
+  if (sequence == NULL || trie == NULL)
+    return -1;
+
+  if (!*have_prev || !same_sequence(record, prev, config)) {
+    in->sequences++;
+
+    if (*have_prev &&
+        add_pair(&in->pairv, &in->pairs, paircap, prev_word, "EOS") != 0)
+      return -1;
+
+    if (add_pair(&in->pairv, &in->pairs, paircap, "BOS", trie->value) != 0)
+      return -1;
+
+    free_json_record(prev);
+
+    prev->v = calloc(1, sizeof *prev->v);
+    if (prev->v == NULL)
+      return -1;
+
+    prev->v->name = strdup(config->ledger.sequence);
+    prev->v->value = strdup(sequence->value);
+    prev->v->type = sequence->type;
+
+    if (prev->v->name == NULL || prev->v->value == NULL) {
+      prev->n = 1;
+      free_json_record(prev);
+      return -1;
+    }
+
+    prev->n = 1;
+    *have_prev = true;
+    return 0;
+  }
+
+  if (add_pair(&in->pairv, &in->pairs, paircap, prev_word, trie->value) != 0)
+    return -1;
+
+  return 0;
+}
+
+static int read_ledger(FILE *fp, const MkledgerConfig *config,
+                       LedgerInput *in) {
   char line[LINE_SIZE];
-  char prev_id[256] = "";
   char prev_word[LINE_SIZE] = "";
+  JsonRecord prev = {0};
+  bool have_prev = false;
   size_t paircap = 0;
   size_t surfacecap = 0;
   size_t tokencap = 0;
@@ -207,77 +1055,82 @@ static int read_ledger(FILE *fp, LedgerInput *in) {
   memset(in, 0, sizeof *in);
 
   while (fgets(line, sizeof line, fp) != NULL) {
-    char *field[NFIELDS];
-    char *p = line;
-    int n = 0;
+    JsonRecord record = {0};
+    const JsonField *trie;
+    size_t lineno = in->records + 1;
+    size_t word_len;
 
     line[strcspn(line, "\n")] = '\0';
 
-    field[n++] = p;
-
-    while (n < NFIELDS && (p = strchr(p, '\t')) != NULL) {
-      *p++ = '\0';
-      field[n++] = p;
-    }
-
-    if (n != NFIELDS) {
-      fprintf(stderr, "invalid record at line %zu\n", in->records + 1);
+    if (parse_json_record(line, lineno, config, &record) != 0) {
+      free_json_record(&prev);
       return -1;
     }
 
-    size_t word_len = strlen(field[2]);
+    if (add_combine(in, &record, config) != 0) {
+      fprintf(stderr, "cannot add combine at line %zu\n", lineno);
+      free_json_record(&record);
+      free_json_record(&prev);
+      return -1;
+    }
+
+    trie = find_json_field_const(&record, config->ledger.trie);
+    if (trie == NULL) {
+      fprintf(stderr, "missing %s at line %zu\n", config->ledger.trie, lineno);
+      free_json_record(&record);
+      free_json_record(&prev);
+      return -1;
+    }
+
+    word_len = strlen(trie->value);
 
     if (word_len > in->max_word_len)
       in->max_word_len = word_len;
 
-    if (add_surface(&in->surfacev, &in->nsurfaces, &surfacecap, field[2]) !=
+    if (add_surface(&in->surfacev, &in->nsurfaces, &surfacecap, trie->value) !=
         0) {
-      fprintf(stderr, "cannot add surface at line %zu\n", in->records + 1);
+      fprintf(stderr, "cannot add surface at line %zu\n", lineno);
+      free_json_record(&record);
+      free_json_record(&prev);
       return -1;
     }
 
-    if (strcmp(field[0], prev_id) != 0) {
-      in->sequences++;
-
-      if (in->records > 0) {
-        if (add_pair(&in->pairv, &in->pairs, &paircap, prev_word, "EOS") != 0)
-          return -1;
-      }
-
-      if (add_pair(&in->pairv, &in->pairs, &paircap, "BOS", field[2]) != 0)
-        return -1;
-
-      if (strlen(field[0]) >= sizeof prev_id) {
-        fprintf(stderr, "id too long at line %zu\n", in->records + 1);
-        return -1;
-      }
-
-      strcpy(prev_id, field[0]);
-
-    } else {
-      if (add_pair(&in->pairv, &in->pairs, &paircap, prev_word, field[2]) != 0)
-        return -1;
-    }
-
-    if (strlen(field[2]) >= sizeof prev_word) {
-      fprintf(stderr, "word too long at line %zu\n", in->records + 1);
+    if (add_record_pair(in, &record, &prev, config, prev_word, &have_prev,
+                        &paircap) != 0) {
+      free_json_record(&record);
+      free_json_record(&prev);
       return -1;
     }
 
-    if (add_token(&in->tokenv, &in->ntokens, &tokencap, field[2],
+    if (strlen(trie->value) >= sizeof prev_word) {
+      fprintf(stderr, "%s too long at line %zu\n", config->ledger.trie,
+              lineno);
+      free_json_record(&record);
+      free_json_record(&prev);
+      return -1;
+    }
+
+    if (add_token(&in->tokenv, &in->ntokens, &tokencap, trie->value,
                   in->sequences - 1) != 0) {
-      fprintf(stderr, "cannot add token at line %zu\n", in->records + 1);
+      fprintf(stderr, "cannot add token at line %zu\n", lineno);
+      free_json_record(&record);
+      free_json_record(&prev);
       return -1;
     }
 
-    strcpy(prev_word, field[2]);
+    strcpy(prev_word, trie->value);
+
+    free_json_record(&record);
     in->records++;
   }
 
-  if (in->records > 0) {
-    if (add_pair(&in->pairv, &in->pairs, &paircap, prev_word, "EOS") != 0)
-      return -1;
+  if (have_prev &&
+      add_pair(&in->pairv, &in->pairs, &paircap, prev_word, "EOS") != 0) {
+    free_json_record(&prev);
+    return -1;
   }
+
+  free_json_record(&prev);
 
   if (ferror(fp))
     return -1;
@@ -370,6 +1223,7 @@ static void show_pair_freq(const PairTable *table) {
 static void show_stat(const LedgerInput *in, const PairTable *pair_table,
                       size_t unique_surfaces) {
   printf("records:   %zu\n", in->records);
+  printf("combines:  %zu\n", in->ncombines);
   printf("sequences: %zu\n", in->sequences);
   printf("pairs:     %zu\n", in->pairs);
   printf("unique:    %zu\n", pair_table->unique_pairs);
@@ -387,12 +1241,19 @@ static void show_stat(const LedgerInput *in, const PairTable *pair_table,
 
 static void free_mem(LedgerInput *in, PairTable *pair_table,
                      size_t unique_surfaces) {
+  Combine *combine;
+
+  for (combine = in->combinev; combine < in->combinev + in->ncombines;
+       combine++)
+    free_combine(combine);
+
   for (size_t i = 0; i < unique_surfaces; i++)
     free(in->surfacev[i]);
 
   for (size_t i = 0; i < in->ntokens; i++)
     free(in->tokenv[i].surface);
 
+  free(in->combinev);
   free(in->tokenv);
   free(in->surfacev);
   free(in->pairv);
@@ -647,11 +1508,20 @@ int main(int argc, char *argv[]) {
   int show_stats = 0;
   int show_freq = 0;
   int opt;
+  MkledgerConfig config;
+  int monitor = 0;
+  const char *config_path = "ledger-config.json";
 
-  while ((opt = getopt(argc, argv, "fshv")) != -1) {
+  while ((opt = getopt(argc, argv, "c:fmshv")) != -1) {
     switch (opt) {
     case 'f':
       show_freq = 1;
+      break;
+    case 'c':
+      config_path = optarg;
+      break;
+    case 'm':
+      monitor = 1;
       break;
     case 's':
       show_stats = 1;
@@ -682,9 +1552,15 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
+  if (load_mkledger_config(config_path, &config) != 0)
+    return EXIT_FAILURE;
+
+  if (monitor)
+    monitor_config(&config);
+
   LedgerInput in;
 
-  if (read_ledger(fp, &in) != 0) {
+  if (read_ledger(fp, &config, &in) != 0) {
     fprintf(stderr, "cannot read ledger\n");
     fclose(fp);
     return EXIT_FAILURE;
@@ -692,6 +1568,8 @@ int main(int argc, char *argv[]) {
 
   if (fp != stdin)
     fclose(fp);
+
+  free_mkledger_config(&config);
 
   if (mkledger(&in, show_stats, show_freq) != 0)
     return EXIT_FAILURE;
