@@ -106,6 +106,8 @@ static void show_reach(const LongestPathList *list);
 static void show_occurrence_adjacencies(const Ledger *ledger,
                                          const char *input,
                                          const Lattice *lat);
+static void show_observed_paths(const Ledger *ledger, const char *input,
+                                const Lattice *lat);
 static int process_input(const Ledger *ledger, int monitor);
 
 static bool reach_covers_adjacency(const LongestPathList *list,
@@ -1074,6 +1076,82 @@ static void show_occurrence_adjacencies(const Ledger *ledger,
   }
 }
 
+static void show_observed_path_from(const Ledger *ledger,
+                                    const char *input, const Lattice *lat,
+                                    const LatticeEdge *edge,
+                                    const OccurrenceRecord *occurrence,
+                                    size_t start, uint32_t *combinev,
+                                    size_t depth) {
+  const OccurrenceRecord *end;
+  const OccurrenceRecord *next_occurrence;
+  const LatticeEdge *next_edge;
+  bool extended = false;
+  size_t i;
+
+  combinev[depth - 1] = occurrence->combine;
+  end = ledger->occurrencev + ledger->occurrence->noccurrences;
+
+  if (occurrence + 1 < end && depth < lat->n) {
+    next_occurrence = occurrence + 1;
+
+    if (next_occurrence->sequence == occurrence->sequence) {
+      for (next_edge = lat->v; next_edge < lat->v + lat->n; next_edge++) {
+        if (!lattice_edges_connect(input, edge, next_edge))
+          continue;
+
+        if (next_edge->surface != next_occurrence->surface)
+          continue;
+
+        show_observed_path_from(ledger, input, lat, next_edge, next_occurrence,
+                                start, combinev, depth + 1);
+        extended = true;
+      }
+    }
+  }
+
+  if (!extended && depth > 1) {
+    printf("observed path\tsequence=%u\tdepth=%zu\tcombine=",
+           occurrence->sequence, depth);
+
+    for (i = 0; i < depth; i++) {
+      if (i != 0)
+        fputs("→", stdout);
+      printf("%u", combinev[i]);
+    }
+
+    printf("\t%.*s\n", (int)(edge->end - start), input + start);
+  }
+}
+
+static void show_observed_paths(const Ledger *ledger, const char *input,
+                                const Lattice *lat) {
+  const LatticeEdge *edge;
+  const OccurrenceRecord *occurrence;
+  const OccurrenceRecord *end;
+  uint32_t *combinev;
+
+  if (lat->n == 0)
+    return;
+
+  combinev = malloc(lat->n * sizeof *combinev);
+  if (combinev == NULL)
+    return;
+
+  end = ledger->occurrencev + ledger->occurrence->noccurrences;
+
+  for (edge = lat->v; edge < lat->v + lat->n; edge++) {
+    for (occurrence = ledger->occurrencev; occurrence < end; occurrence++) {
+      if (occurrence->surface != edge->surface)
+        continue;
+
+      show_observed_path_from(ledger, input, lat, edge, occurrence, edge->start,
+                              combinev, 1);
+    }
+  }
+
+  free(combinev);
+}
+
 static int process_input(const Ledger *ledger, int monitor) {
   char input[4096];
   Lattice lat;
@@ -1125,6 +1203,7 @@ static int process_input(const Ledger *ledger, int monitor) {
 
   show_paths(ledger, input, &lat);
   show_occurrence_adjacencies(ledger, input, &lat);
+  show_observed_paths(ledger, input, &lat);
 
   LongestPathList paths;
 
