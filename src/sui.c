@@ -729,7 +729,7 @@ static int emit_occurrence(const Ledger *ledger,
             return -1;
         }
 
-        fputs("}}\n", stdout);
+        fputs("}}", stdout);
       }
 
       return 0;
@@ -1199,10 +1199,19 @@ static int emit_observed_path_from(
     }
   }
 
-  if (!extended && edge->end == input_bytes)
-    for (p = path; p < path + depth; p++)
+  if (!extended && edge->end == input_bytes) {
+    fputs("{\"records\":[", stdout);
+
+    for (p = path; p < path + depth; p++) {
+      if (p != path)
+        putchar(',');
+
       if (emit_occurrence(ledger, *p) != 0)
         return -1;
+    }
+
+    fputs("]}\n", stdout);
+  }
 
   return 0;
 }
