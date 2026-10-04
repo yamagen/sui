@@ -472,7 +472,7 @@ static int find_occurrence_section(Ledger *ledger) {
   ledger->occurrence = (const OccurrenceSectionHeader *)p;
 
   if (ledger->occurrence->magic != OCCURRENCE_MAGIC ||
-      ledger->occurrence->version != 1)
+      ledger->occurrence->version != 2)
     return -1;
 
   p += sizeof *ledger->occurrence;
