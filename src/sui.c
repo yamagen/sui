@@ -646,18 +646,18 @@ static const char *show_ledger_field(const char *p, const char *end,
   return p;
 }
 
-static int emit_combine(const Ledger *ledger, uint32_t combine_id) {
+static int emit_occurrence(const Ledger *ledger,
+                           const OccurrenceRecord *occurrence) {
   const char *p = (const char *)(ledger->combine + 1);
   const char *end = (const char *)ledger->occurrence;
   uint32_t i;
 
-  if (combine_id >= ledger->combine->ncombines)
+  if (occurrence->combine >= ledger->combine->ncombines)
     return -1;
 
   for (i = 0; i < ledger->combine->ncombines; i++) {
     const CombineRecordHeader *combine;
     const char *fields;
-    const char *provenances;
     uint32_t j;
 
     if ((size_t)(end - p) < sizeof *combine)
@@ -673,7 +673,67 @@ static int emit_combine(const Ledger *ledger, uint32_t combine_id) {
         return -1;
     }
 
-    provenances = p;
+    if (i == occurrence->combine) {
+      const char *provenancep = p;
+
+      if (occurrence->provenance >= combine->nprovenance)
+        return -1;
+
+      for (j = 0; j < occurrence->provenance; j++) {
+        const ProvenanceRecordHeader *provenance;
+        uint32_t k;
+
+        if ((size_t)(end - provenancep) < sizeof *provenance)
+          return -1;
+
+        provenance = (const ProvenanceRecordHeader *)provenancep;
+        provenancep += sizeof *provenance;
+
+        for (k = 0; k < provenance->nfields; k++) {
+          provenancep = skip_ledger_field(provenancep, end);
+          if (provenancep == NULL)
+            return -1;
+        }
+      }
+
+      putchar('{');
+
+      {
+        const char *q = fields;
+        const ProvenanceRecordHeader *provenance;
+        uint32_t k;
+
+        for (j = 0; j < combine->nfields; j++) {
+          if (j != 0)
+            putchar(',');
+
+          q = print_ledger_field_json(q, end);
+          if (q == NULL)
+            return -1;
+        }
+
+        if ((size_t)(end - provenancep) < sizeof *provenance)
+          return -1;
+
+        provenance = (const ProvenanceRecordHeader *)provenancep;
+        provenancep += sizeof *provenance;
+
+        fputs(",\"provenance\":{", stdout);
+
+        for (k = 0; k < provenance->nfields; k++) {
+          if (k != 0)
+            putchar(',');
+
+          provenancep = print_ledger_field_json(provenancep, end);
+          if (provenancep == NULL)
+            return -1;
+        }
+
+        fputs("}}\n", stdout);
+      }
+
+      return 0;
+    }
 
     for (j = 0; j < combine->nprovenance; j++) {
       const ProvenanceRecordHeader *provenance;
@@ -691,155 +751,9 @@ static int emit_combine(const Ledger *ledger, uint32_t combine_id) {
           return -1;
       }
     }
-
-    if (i != combine_id)
-      continue;
-
-    putchar('{');
-
-    {
-      const char *q = fields;
-
-      for (j = 0; j < combine->nfields; j++) {
-        if (j != 0)
-          putchar(',');
-
-        q = print_ledger_field_json(q, end);
-        if (q == NULL)
-          return -1;
-      }
-
-      fputs(",\"provenance\":[", stdout);
-      q = provenances;
-
-      for (j = 0; j < combine->nprovenance; j++) {
-        const ProvenanceRecordHeader *provenance;
-        uint32_t k;
-
-        if ((size_t)(end - q) < sizeof *provenance)
-          return -1;
-
-        provenance = (const ProvenanceRecordHeader *)q;
-        q += sizeof *provenance;
-
-        if (j != 0)
-          putchar(',');
-        putchar('{');
-
-        for (k = 0; k < provenance->nfields; k++) {
-          if (k != 0)
-            putchar(',');
-
-          q = print_ledger_field_json(q, end);
-          if (q == NULL)
-            return -1;
-        }
-
-        putchar('}');
-      }
-    }
-
-    fputs("]}\n", stdout);
-    return 0;
   }
 
   return -1;
-}
-
-static int emit_surface_combines(const Ledger *ledger, uint32_t surface) {
-  const char *p = (const char *)(ledger->combine + 1);
-  const char *end = (const char *)ledger->map + ledger->size;
-  uint32_t i;
-
-  for (i = 0; i < ledger->combine->ncombines; i++) {
-    const CombineRecordHeader *combine;
-    const char *fields;
-    const char *provenances;
-    uint32_t j;
-
-    if ((size_t)(end - p) < sizeof *combine)
-      return -1;
-
-    combine = (const CombineRecordHeader *)p;
-    p += sizeof *combine;
-    fields = p;
-
-    for (j = 0; j < combine->nfields; j++) {
-      p = skip_ledger_field(p, end);
-      if (p == NULL)
-        return -1;
-    }
-
-    provenances = p;
-
-    for (j = 0; j < combine->nprovenance; j++) {
-      const ProvenanceRecordHeader *provenance;
-      uint32_t k;
-
-      if ((size_t)(end - p) < sizeof *provenance)
-        return -1;
-
-      provenance = (const ProvenanceRecordHeader *)p;
-      p += sizeof *provenance;
-
-      for (k = 0; k < provenance->nfields; k++) {
-        p = skip_ledger_field(p, end);
-        if (p == NULL)
-          return -1;
-      }
-    }
-
-    if (combine->surface != surface)
-      continue;
-
-    putchar('{');
-
-    {
-      const char *q = fields;
-
-      for (j = 0; j < combine->nfields; j++) {
-        if (j != 0)
-          putchar(',');
-
-        q = print_ledger_field_json(q, end);
-        if (q == NULL)
-          return -1;
-      }
-
-      fputs(",\"provenance\":[", stdout);
-      q = provenances;
-
-      for (j = 0; j < combine->nprovenance; j++) {
-        const ProvenanceRecordHeader *provenance;
-        uint32_t k;
-
-        if ((size_t)(end - q) < sizeof *provenance)
-          return -1;
-
-        provenance = (const ProvenanceRecordHeader *)q;
-        q += sizeof *provenance;
-
-        if (j != 0)
-          putchar(',');
-        putchar('{');
-
-        for (k = 0; k < provenance->nfields; k++) {
-          if (k != 0)
-            putchar(',');
-
-          q = print_ledger_field_json(q, end);
-          if (q == NULL)
-            return -1;
-        }
-
-        putchar('}');
-      }
-    }
-
-    fputs("]}\n", stdout);
-  }
-
-  return 0;
 }
 
 static int show_surface_combines(const Ledger *ledger, uint32_t surface) {
@@ -1252,19 +1166,17 @@ static void show_observed_paths(const Ledger *ledger, const char *input,
   free(combinev);
 }
 
-static int emit_observed_path_from(const Ledger *ledger,
-                                   const char *input, const Lattice *lat,
-                                   const LatticeEdge *edge,
-                                   const OccurrenceRecord *occurrence,
-                                   uint32_t *combinev, size_t depth,
-                                   size_t input_bytes) {
+static int emit_observed_path_from(
+    const Ledger *ledger, const char *input, const Lattice *lat,
+    const LatticeEdge *edge, const OccurrenceRecord *occurrence,
+    const OccurrenceRecord **path, size_t depth, size_t input_bytes) {
   const OccurrenceRecord *end;
   const OccurrenceRecord *next_occurrence;
   const LatticeEdge *next_edge;
   bool extended = false;
-  size_t i;
+  const OccurrenceRecord **p;
 
-  combinev[depth - 1] = occurrence->combine;
+  path[depth - 1] = occurrence;
   end = ledger->occurrencev + ledger->occurrence->noccurrences;
 
   if (occurrence + 1 < end && depth < lat->n) {
@@ -1279,7 +1191,7 @@ static int emit_observed_path_from(const Ledger *ledger,
           continue;
 
         if (emit_observed_path_from(ledger, input, lat, next_edge,
-                                    next_occurrence, combinev, depth + 1,
+                                    next_occurrence, path, depth + 1,
                                     input_bytes) != 0)
           return -1;
         extended = true;
@@ -1287,11 +1199,10 @@ static int emit_observed_path_from(const Ledger *ledger,
     }
   }
 
-  if (!extended && edge->end == input_bytes) {
-    for (i = 0; i < depth; i++)
-      if (emit_combine(ledger, combinev[i]) != 0)
+  if (!extended && edge->end == input_bytes)
+    for (p = path; p < path + depth; p++)
+      if (emit_occurrence(ledger, *p) != 0)
         return -1;
-  }
 
   return 0;
 }
@@ -1301,14 +1212,14 @@ static int emit_observed_paths(const Ledger *ledger, const char *input,
   const LatticeEdge *edge;
   const OccurrenceRecord *occurrence;
   const OccurrenceRecord *end;
-  uint32_t *combinev;
+  const OccurrenceRecord **path;
   size_t input_bytes = strlen(input);
 
   if (lat->n == 0)
     return 0;
 
-  combinev = malloc(lat->n * sizeof *combinev);
-  if (combinev == NULL)
+  path = malloc(lat->n * sizeof *path);
+  if (path == NULL)
     return -1;
 
   end = ledger->occurrencev + ledger->occurrence->noccurrences;
@@ -1321,15 +1232,15 @@ static int emit_observed_paths(const Ledger *ledger, const char *input,
       if (occurrence->surface != edge->surface)
         continue;
 
-      if (emit_observed_path_from(ledger, input, lat, edge, occurrence,
-                                  combinev, 1, input_bytes) != 0) {
-        free(combinev);
+      if (emit_observed_path_from(ledger, input, lat, edge, occurrence, path,
+                                  1, input_bytes) != 0) {
+        free(path);
         return -1;
       }
     }
   }
 
-  free(combinev);
+  free(path);
   return 0;
 }
 
