@@ -43,6 +43,7 @@ typedef struct {
 typedef struct {
   char *surface;
   size_t sequence;
+  size_t combine;
 } Token;
 
 typedef struct {
