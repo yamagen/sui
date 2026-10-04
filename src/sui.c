@@ -84,8 +84,9 @@ typedef struct {
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b);
-static void show_uncovered_adjacencies(const Ledger *ledger, const char *input,
-                                       const Lattice *lat,
+static void show_uncovered_adjacencies(const Ledger *ledger,
+                                       const MkledgerConfig *config,
+                                       const char *input, const Lattice *lat,
                                        const LongestPathList *list);
 
 static void longest_path_list_init(LongestPathList *list);
@@ -161,8 +162,49 @@ static bool reach_covers_adjacency(const LongestPathList *list,
   return false;
 }
 
-static void show_uncovered_adjacencies(const Ledger *ledger, const char *input,
-                                       const Lattice *lat,
+static void print_adjacency_work_row(const MkledgerConfig *config,
+                                     const char *word) {
+  const SchemaField *field;
+  int wrote_word = 0;
+
+  putchar('{');
+
+  if (config != NULL) {
+    for (field = config->schema.v; field < config->schema.v + config->schema.n;
+         field++) {
+      if (is_provenance_name(config, field->field))
+        continue;
+      if (!schema_allows_type(field, "string"))
+        continue;
+
+      if (field != config->schema.v)
+        putchar(',');
+
+      print_json_string_to(stdout, field->field);
+      putchar(':');
+
+      if (strcmp(field->field, "word") == 0) {
+        print_json_string_to(stdout, word);
+        wrote_word = 1;
+      } else {
+        fputs("\"\"", stdout);
+      }
+    }
+  }
+
+  if (!wrote_word) {
+    if (config != NULL && config->schema.n != 0)
+      putchar(',');
+    fputs("\"word\":", stdout);
+    print_json_string_to(stdout, word);
+  }
+
+  fputs("}\n", stdout);
+}
+
+static void show_uncovered_adjacencies(const Ledger *ledger,
+                                       const MkledgerConfig *config,
+                                       const char *input, const Lattice *lat,
                                        const LongestPathList *list) {
   const LatticeEdge *a;
   const LatticeEdge *b;
@@ -193,8 +235,8 @@ static void show_uncovered_adjacencies(const Ledger *ledger, const char *input,
       printf("add an adjacency of A with B: %.*s[%.*s]%s\n", (int)a->start,
              input, (int)(b->end - a->start), input + a->start, input + b->end);
 
-      printf("{\"word\":\"%s\"}\n", as);
-      printf("{\"word\":\"%s\"}\n", bs);
+      print_adjacency_work_row(config, as);
+      print_adjacency_work_row(config, bs);
     }
   }
 }
@@ -2030,7 +2072,7 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
   show_longest_paths(input, &paths);
   show_reach(&paths);
-  show_uncovered_adjacencies(ledger, input, &lat, &paths);
+  show_uncovered_adjacencies(ledger, config, input, &lat, &paths);
 
   longest_path_list_free(&paths);
 
