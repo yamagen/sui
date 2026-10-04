@@ -497,7 +497,7 @@ static int add_surface(char ***surfacev, size_t *n, size_t *cap,
 }
 
 static int add_token(Token **tokenv, size_t *n, size_t *cap,
-                     const char *surface, size_t sequence) {
+                     const char *surface, size_t sequence, size_t combine) {
   Token *tmp;
   char *s;
 
@@ -518,6 +518,7 @@ static int add_token(Token **tokenv, size_t *n, size_t *cap,
 
   (*tokenv)[*n].surface = s;
   (*tokenv)[*n].sequence = sequence;
+  (*tokenv)[*n].combine = combine;
   (*n)++;
 
   return 0;
@@ -929,7 +930,7 @@ static int append_provenance(Combine *combine, Provenance *provenance) {
 }
 
 static int add_combine(LedgerInput *in, const JsonRecord *record,
-                       const MkledgerConfig *config) {
+                       const MkledgerConfig *config, size_t *combine_id) {
   Combine candidate = {0};
   Provenance provenance = {0};
   Combine *combine;
@@ -955,6 +956,7 @@ static int add_combine(LedgerInput *in, const JsonRecord *record,
       return -1;
     }
 
+    *combine_id = (size_t)(combine - in->combinev);
     return 0;
   }
 
@@ -973,9 +975,11 @@ static int add_combine(LedgerInput *in, const JsonRecord *record,
   if (append_provenance(combine, &provenance) != 0) {
     in->ncombines--;
     free_combine(combine);
+    free_provenance(&provenance);
     return -1;
   }
 
+  *combine_id = in->ncombines - 1;
   return 0;
 }
 
@@ -1059,6 +1063,7 @@ static int read_ledger(FILE *fp, const MkledgerConfig *config,
     const JsonField *trie;
     size_t lineno = in->records + 1;
     size_t word_len;
+    size_t combine_id;
 
     line[strcspn(line, "\n")] = '\0';
 
@@ -1067,7 +1072,7 @@ static int read_ledger(FILE *fp, const MkledgerConfig *config,
       return -1;
     }
 
-    if (add_combine(in, &record, config) != 0) {
+    if (add_combine(in, &record, config, &combine_id) != 0) {
       fprintf(stderr, "cannot add combine at line %zu\n", lineno);
       free_json_record(&record);
       free_json_record(&prev);
@@ -1111,7 +1116,7 @@ static int read_ledger(FILE *fp, const MkledgerConfig *config,
     }
 
     if (add_token(&in->tokenv, &in->ntokens, &tokencap, trie->value,
-                  in->sequences - 1) != 0) {
+                  in->sequences - 1, combine_id) != 0) {
       fprintf(stderr, "cannot add token at line %zu\n", lineno);
       free_json_record(&record);
       free_json_record(&prev);
