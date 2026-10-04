@@ -1,0 +1,11 @@
+{
+  "schema": {
+    "corpus": "string",
+    "id": ["integer", "string"],
+    "token": "integer"
+  },
+  "provenance": ["corpus", "id", "token"],
+  "candy": {
+    "filename": "ledger-candy.jsonl"
+  }
+}
