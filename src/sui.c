@@ -1169,7 +1169,7 @@ static void show_observed_paths(const Ledger *ledger, const char *input,
 static int emit_observed_path_from(
     const Ledger *ledger, const char *input, const Lattice *lat,
     const LatticeEdge *edge, const OccurrenceRecord *occurrence,
-    const OccurrenceRecord **path, size_t depth, size_t input_bytes) {
+    const OccurrenceRecord **path, size_t depth, size_t target_end) {
   const OccurrenceRecord *end;
   const OccurrenceRecord *next_occurrence;
   const LatticeEdge *next_edge;
@@ -1192,15 +1192,15 @@ static int emit_observed_path_from(
 
         if (emit_observed_path_from(ledger, input, lat, next_edge,
                                     next_occurrence, path, depth + 1,
-                                    input_bytes) != 0)
+                                    target_end) != 0)
           return -1;
         extended = true;
       }
     }
   }
 
-  if (!extended && edge->end == input_bytes) {
-    fputs("{\"records\":[", stdout);
+  if (!extended && edge->end == target_end) {
+    printf("{\"start\":0,\"end\":%zu,\"records\":[", target_end);
 
     for (p = path; p < path + depth; p++) {
       if (p != path)
@@ -1217,14 +1217,12 @@ static int emit_observed_path_from(
 }
 
 static int emit_observed_paths(const Ledger *ledger, const char *input,
-                               const Lattice *lat) {
+                               const Lattice *lat, size_t target_end) {
   const LatticeEdge *edge;
   const OccurrenceRecord *occurrence;
   const OccurrenceRecord *end;
   const OccurrenceRecord **path;
-  size_t input_bytes = strlen(input);
-
-  if (lat->n == 0)
+  if (lat->n == 0 || target_end == 0)
     return 0;
 
   path = malloc(lat->n * sizeof *path);
@@ -1242,7 +1240,7 @@ static int emit_observed_paths(const Ledger *ledger, const char *input,
         continue;
 
       if (emit_observed_path_from(ledger, input, lat, edge, occurrence, path,
-                                  1, input_bytes) != 0) {
+                                  1, target_end) != 0) {
         free(path);
         return -1;
       }
@@ -1270,11 +1268,29 @@ static int process_input(const Ledger *ledger, int monitor) {
   }
 
   if (!monitor) {
-    if (emit_observed_paths(ledger, input, &lat) != 0) {
+    LongestPathList paths;
+    const LongestPath *path;
+    size_t target_end = 0;
+
+    longest_path_list_init(&paths);
+
+    if (make_longest_paths(ledger, input, &lat, &paths) != 0) {
+      longest_path_list_free(&paths);
       lattice_free(&lat);
       return -1;
     }
 
+    for (path = paths.v; path < paths.v + paths.n; path++)
+      if (path->start == 0 && path->end > target_end)
+        target_end = path->end;
+
+    if (emit_observed_paths(ledger, input, &lat, target_end) != 0) {
+      longest_path_list_free(&paths);
+      lattice_free(&lat);
+      return -1;
+    }
+
+    longest_path_list_free(&paths);
     lattice_free(&lat);
     return 0;
   }
