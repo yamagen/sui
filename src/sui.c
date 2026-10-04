@@ -38,8 +38,11 @@ typedef struct {
   uint32_t null_surface;
   uint32_t current_max_surface;
   char **runtime_surface_strings;
+  size_t *runtime_surface_offsets;
   size_t runtime_surface_count;
   size_t runtime_surface_cap;
+  void *candy_map;
+  size_t candy_size;
 } Ledger;
 
 typedef struct {
@@ -151,7 +154,113 @@ static void print_input_provenance(FILE *fp, const SuiInput *input);
 static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
                            const SuiInput *input, size_t start, size_t end);
 static char *parse_candy_text(const char *line);
-static int index_candy_surfaces(Ledger *ledger, const MkledgerConfig *config);
+static int index_candy_surfaces(Ledger *ledger,
+                                const MkledgerConfig *config) {
+  int fd;
+  struct stat st;
+  const char *base;
+  size_t offset = 0;
+  uint32_t surface = ledger->null_surface;
+
+  if (config == NULL || config->candy.filename == NULL)
+    return 0;
+
+  fd = open(config->candy.filename, O_RDONLY);
+  if (fd < 0)
+    return 0;
+
+  if (fstat(fd, &st) != 0) {
+    close(fd);
+    return -1;
+  }
+
+  ledger->candy_size = (size_t)st.st_size;
+  if (ledger->candy_size == 0) {
+    close(fd);
+    return 0;
+  }
+
+  ledger->candy_map =
+      mmap(NULL, ledger->candy_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  close(fd);
+
+  if (ledger->candy_map == MAP_FAILED) {
+    ledger->candy_map = NULL;
+    ledger->candy_size = 0;
+    return -1;
+  }
+
+  base = (const char *)ledger->candy_map;
+
+  while (offset < ledger->candy_size) {
+    const char *line = base + offset;
+    const char *nl = memchr(line, '\n', ledger->candy_size - offset);
+    size_t line_len = nl == NULL ? ledger->candy_size - offset
+                                 : (size_t)(nl - line);
+    char *copy;
+    char *text;
+
+    if (line_len != 0 && line[line_len - 1] == '\r')
+      line_len--;
+
+    copy = strndup(line, line_len);
+    if (copy == NULL)
+      return -1;
+
+    text = parse_candy_text(copy);
+    free(copy);
+
+    if (text != NULL) {
+      if (surface == UINT32_MAX) {
+        free(text);
+        return -1;
+      }
+
+      if (ledger->runtime_surface_count == ledger->runtime_surface_cap) {
+        size_t new_cap = ledger->runtime_surface_cap == 0
+                             ? 16
+                             : ledger->runtime_surface_cap * 2;
+        char **new_strings = realloc(ledger->runtime_surface_strings,
+                                     new_cap * sizeof(*new_strings));
+        size_t *new_offsets;
+
+        if (new_strings == NULL) {
+          free(text);
+          return -1;
+        }
+        ledger->runtime_surface_strings = new_strings;
+
+        new_offsets = realloc(ledger->runtime_surface_offsets,
+                              new_cap * sizeof(*new_offsets));
+        if (new_offsets == NULL) {
+          free(text);
+          return -1;
+        }
+
+        ledger->runtime_surface_offsets = new_offsets;
+        ledger->runtime_surface_cap = new_cap;
+      }
+
+      ledger->runtime_surface_strings[ledger->runtime_surface_count] = text;
+      ledger->runtime_surface_offsets[ledger->runtime_surface_count] = offset;
+      ledger->runtime_surface_count++;
+      surface++;
+    }
+
+    if (nl == NULL)
+      break;
+    offset = (size_t)(nl - base) + 1;
+  }
+
+  ledger->current_max_surface = surface;
+
+  if (ledger->runtime_surface_count != 0 &&
+      runtime_surface_string(ledger, ledger->current_max_surface) == NULL)
+    return -1;
+
+  return 0;
+}
+
 static int scan_candy_surface(const Ledger *ledger,
                               const MkledgerConfig *config,
                               const char *input, size_t start,
@@ -1069,6 +1178,10 @@ static void unload_ledger(Ledger *ledger) {
   for (i = 0; i < ledger->runtime_surface_count; i++)
     free(ledger->runtime_surface_strings[i]);
   free(ledger->runtime_surface_strings);
+  free(ledger->runtime_surface_offsets);
+
+  if (ledger->candy_map != NULL)
+    munmap(ledger->candy_map, ledger->candy_size);
 
   munmap(ledger->map, ledger->size);
 }
@@ -1123,8 +1236,11 @@ static int load_ledger(const char *path, Ledger *ledger) {
   ledger->null_surface = ledger->header->unique_surfaces + 2;
   ledger->current_max_surface = ledger->null_surface;
   ledger->runtime_surface_strings = NULL;
+  ledger->runtime_surface_offsets = NULL;
   ledger->runtime_surface_count = 0;
   ledger->runtime_surface_cap = 0;
+  ledger->candy_map = NULL;
+  ledger->candy_size = 0;
 
   ledger->trie =
       (const TrieNode *)((const char *)ledger->map + sizeof(LedgerHeader));
