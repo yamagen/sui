@@ -1469,8 +1469,13 @@ static int write_combine_section(FILE *fp, const LedgerInput *in,
     const Provenance *provenance;
     size_t surface;
 
-    trie = find_json_field_const((const JsonRecord *)combine,
-                                 config->ledger.trie);
+    trie = NULL;
+    for (field = combine->v; field < combine->v + combine->n; field++)
+      if (strcmp(field->name, config->ledger.trie) == 0) {
+        trie = field;
+        break;
+      }
+
     if (trie == NULL)
       return -1;
 
