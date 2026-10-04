@@ -6,6 +6,7 @@
 #define TRIE_NONE UINT32_MAX
 #define LEDGER_MAGIC 0x53554932u /* "SUI2" */
 #define COMBINE_MAGIC 0x434d4231u /* "CMB1" */
+#define OCCURRENCE_MAGIC 0x4f434331u /* "OCC1" */
 
 typedef struct {
   uint32_t magic;
@@ -28,6 +29,18 @@ typedef struct {
 typedef struct {
   uint32_t nfields;
 } ProvenanceRecordHeader;
+
+typedef struct {
+  uint32_t magic;
+  uint32_t version;
+  uint32_t noccurrences;
+} OccurrenceSectionHeader;
+
+typedef struct {
+  uint32_t surface;
+  uint32_t sequence;
+  uint32_t combine;
+} OccurrenceRecord;
 
 typedef struct {
   uint32_t token;
