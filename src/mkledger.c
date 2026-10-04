@@ -1220,6 +1220,38 @@ static void show_pair_freq(const PairTable *table) {
     printf("%zu\n", table->v[i].freq);
 }
 
+static void show_combine(const LedgerInput *in) {
+  const Combine *combine;
+  const JsonField *field;
+  const Provenance *provenance;
+  size_t n;
+
+  for (combine = in->combinev; combine < in->combinev + in->ncombines;
+       combine++) {
+    if (combine->nprovenance < 2)
+      continue;
+
+    printf("combine:\n");
+    for (field = combine->v; field < combine->v + combine->n; field++)
+      printf("  %s: %s\n", field->name, field->value);
+
+    printf("provenance: %zu\n", combine->nprovenance);
+    n = 0;
+    for (provenance = combine->provenance;
+         provenance < combine->provenance + combine->nprovenance;
+         provenance++) {
+      printf("  [%zu]\n", n++);
+      for (field = provenance->v; field < provenance->v + provenance->n;
+           field++)
+        printf("    %s: %s\n", field->name, field->value);
+    }
+
+    return;
+  }
+
+  printf("no combine with multiple provenance\n");
+}
+
 static size_t count_provenance(const LedgerInput *in) {
   const Combine *combine;
   size_t nprovenance = 0;
@@ -1462,7 +1494,8 @@ static int write_ledger(const char *path, const Trie *trie, char **surfacev,
   return 0;
 }
 
-static int mkledger(LedgerInput *in, int show_stats, int show_freq) {
+static int mkledger(LedgerInput *in, int show_stats, int show_freq,
+                    int show_combine_record) {
   size_t unique_surfaces = make_surface_table(in->surfacev, in->nsurfaces);
 
   PairTable pair_table =
@@ -1492,6 +1525,9 @@ static int mkledger(LedgerInput *in, int show_stats, int show_freq) {
     printf("trie nodes: %zu\n", trie.n);
   }
 
+  if (show_combine_record)
+    show_combine(in);
+
   trie_free(&trie);
   // trie ends
 
@@ -1509,7 +1545,10 @@ static void usage(const char *prog) {
   printf("Usage: %s [options] [ledger.in]\n", prog);
   printf("Compile ledger input into ledger.dat\n");
   printf("Options:\n");
+  printf("  -c  set config file\n");
   printf("  -f  output pair frequencies\n");
+  printf("  -m  monitor config\n");
+  printf("  -p  show one combine with multiple provenance\n");
   printf("  -s  show statistics\n");
   printf("  -h  show this help\n");
   printf("  -v  show version\n");
@@ -1519,12 +1558,13 @@ int main(int argc, char *argv[]) {
   FILE *fp;
   int show_stats = 0;
   int show_freq = 0;
+  int show_combine_record = 0;
   int opt;
   MkledgerConfig config;
   int monitor = 0;
   const char *config_path = "ledger-config.json";
 
-  while ((opt = getopt(argc, argv, "c:fmshv")) != -1) {
+  while ((opt = getopt(argc, argv, "c:fmpshv")) != -1) {
     switch (opt) {
     case 'f':
       show_freq = 1;
@@ -1534,6 +1574,9 @@ int main(int argc, char *argv[]) {
       break;
     case 'm':
       monitor = 1;
+      break;
+    case 'p':
+      show_combine_record = 1;
       break;
     case 's':
       show_stats = 1;
@@ -1583,7 +1626,7 @@ int main(int argc, char *argv[]) {
 
   free_mkledger_config(&config);
 
-  if (mkledger(&in, show_stats, show_freq) != 0)
+  if (mkledger(&in, show_stats, show_freq, show_combine_record) != 0)
     return EXIT_FAILURE;
 
   return EXIT_SUCCESS;
