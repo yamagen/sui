@@ -115,4 +115,13 @@ reused=$(printf '%s\n' '男につきて何か' |
 [ -z "$reused" ] ||
   fail "candy surface reuse"
 
+cat > "$candy_file" <<'EOF'
+!{"start":6,"end":21,"text":"竹の中に、","word":"","lemma":"","kana":"","lemma-kana":"","romaji":"","lemma-romaji":"","gloss":"","pos":""}
+EOF
+
+reused=$(printf '%s\n' 'その竹の中に、' |
+  "$SUI" -c "$candy_config" -u "$LEDGER")
+[ -z "$reused" ] ||
+  fail "incomplete candy surface reuse"
+
 echo "PASS: sui regression tests"
