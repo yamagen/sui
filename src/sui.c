@@ -472,6 +472,122 @@ static int count_ledger_provenance(const Ledger *ledger,
   return 0;
 }
 
+static const char *show_ledger_field(const char *p, const char *end,
+                                     const char *indent) {
+  const LedgerFieldHeader *field;
+  const char *name;
+  const char *value;
+
+  if ((size_t)(end - p) < sizeof *field)
+    return NULL;
+
+  field = (const LedgerFieldHeader *)p;
+  p += sizeof *field;
+
+  if (field->name_bytes == 0 || field->name_bytes > (size_t)(end - p))
+    return NULL;
+  name = p;
+  p += field->name_bytes;
+
+  if (field->value_bytes == 0 || field->value_bytes > (size_t)(end - p))
+    return NULL;
+  value = p;
+  p += field->value_bytes;
+
+  if (name[field->name_bytes - 1] != '\0' ||
+      value[field->value_bytes - 1] != '\0')
+    return NULL;
+
+  printf("%s%s: %s\n", indent, name, value);
+  return p;
+}
+
+static int show_surface_combines(const Ledger *ledger, uint32_t surface) {
+  const char *p = (const char *)(ledger->combine + 1);
+  const char *end = (const char *)ledger->map + ledger->size;
+  uint32_t matched = 0;
+  uint32_t i;
+
+  for (i = 0; i < ledger->combine->ncombines; i++) {
+    const CombineRecordHeader *combine;
+    const char *fields;
+    const char *provenances;
+    uint32_t j;
+
+    if ((size_t)(end - p) < sizeof *combine)
+      return -1;
+
+    combine = (const CombineRecordHeader *)p;
+    p += sizeof *combine;
+    fields = p;
+
+    for (j = 0; j < combine->nfields; j++) {
+      p = skip_ledger_field(p, end);
+      if (p == NULL)
+        return -1;
+    }
+
+    provenances = p;
+
+    for (j = 0; j < combine->nprovenance; j++) {
+      const ProvenanceRecordHeader *provenance;
+      uint32_t k;
+
+      if ((size_t)(end - p) < sizeof *provenance)
+        return -1;
+
+      provenance = (const ProvenanceRecordHeader *)p;
+      p += sizeof *provenance;
+
+      for (k = 0; k < provenance->nfields; k++) {
+        p = skip_ledger_field(p, end);
+        if (p == NULL)
+          return -1;
+      }
+    }
+
+    if (combine->surface != surface)
+      continue;
+
+    matched++;
+    printf("combine %u: provenance=%u\n", matched, combine->nprovenance);
+
+    {
+      const char *q = fields;
+
+      for (j = 0; j < combine->nfields; j++) {
+        q = show_ledger_field(q, end, "  ");
+        if (q == NULL)
+          return -1;
+      }
+
+      q = provenances;
+
+      for (j = 0; j < combine->nprovenance; j++) {
+        const ProvenanceRecordHeader *provenance;
+        uint32_t k;
+
+        if ((size_t)(end - q) < sizeof *provenance)
+          return -1;
+
+        provenance = (const ProvenanceRecordHeader *)q;
+        q += sizeof *provenance;
+
+        printf("  provenance[%u]\n", j);
+
+        for (k = 0; k < provenance->nfields; k++) {
+          q = show_ledger_field(q, end, "    ");
+          if (q == NULL)
+            return -1;
+        }
+      }
+    }
+  }
+
+  printf("surface combines: %u\n", matched);
+  return 0;
+}
+
 static void unload_ledger(Ledger *ledger) { munmap(ledger->map, ledger->size); }
 
 static int load_ledger(const char *path, Ledger *ledger) {
@@ -707,6 +823,11 @@ static int process_input(const Ledger *ledger) {
         ledger->surface_strings + ledger->surface_offset[e->surface];
 
     printf("%zu\t%zu\t%u\t%s\n", e->start, e->end, e->surface, surface);
+
+    if (show_surface_combines(ledger, e->surface) != 0) {
+      lattice_free(&lat);
+      return -1;
+    }
   }
 
   show_paths(ledger, input, &lat);
