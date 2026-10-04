@@ -32,6 +32,8 @@ typedef struct {
   const uint32_t *surface_offset;
   const char *surface_strings;
   const CombineSectionHeader *combine;
+  const OccurrenceSectionHeader *occurrence;
+  const OccurrenceRecord *occurrencev;
 } Ledger;
 
 typedef struct {
@@ -464,6 +466,24 @@ static int count_ledger_provenance(const Ledger *ledger,
       }
     }
   }
+
+  if ((size_t)(end - p) < sizeof *ledger->occurrence)
+    return -1;
+
+  ledger->occurrence = (const OccurrenceSectionHeader *)p;
+
+  if (ledger->occurrence->magic != OCCURRENCE_MAGIC ||
+      ledger->occurrence->version != 1)
+    return -1;
+
+  p += sizeof *ledger->occurrence;
+
+  if (ledger->occurrence->noccurrences >
+      (size_t)(end - p) / sizeof *ledger->occurrencev)
+    return -1;
+
+  ledger->occurrencev = (const OccurrenceRecord *)p;
+  p += (size_t)ledger->occurrence->noccurrences * sizeof *ledger->occurrencev;
 
   if (p != end)
     return -1;
@@ -1052,6 +1072,7 @@ static int monitor_ledger(const Ledger *ledger) {
   }
 
   printf("provenance:      %u\n", nprovenance);
+  printf("occurrences:     %u\n", ledger->occurrence->noccurrences);
   printf("root token:      %u\n", ledger->trie[0].token);
   printf("root child:      %u\n", ledger->trie[0].child);
   printf("root sibling:    %u\n", ledger->trie[0].sibling);
