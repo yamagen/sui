@@ -3,8 +3,8 @@ CFLAGS  = -O2 -Wall -Wextra
 
 all: mkledger sui
 
-mkledger: src/mkledger.c src/tiny-json.c src/tiny-json.h
-	$(CC) $(CFLAGS) -o $@ src/mkledger.c src/tiny-json.c
+mkledger: src/mkledger.c src/config.c src/config.h src/tiny-json.c src/tiny-json.h
+	$(CC) $(CFLAGS) -o $@ src/mkledger.c src/config.c src/tiny-json.c
 
 sui: src/sui.c src/tiny-json.c src/tiny-json.h
 	$(CC) $(CFLAGS) -o $@ src/sui.c src/tiny-json.c
