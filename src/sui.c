@@ -169,6 +169,7 @@ static bool reach_covers_adjacency(const LongestPathList *list,
 static void print_adjacency_work_row(const MkledgerConfig *config,
                                      const char *word) {
   const SchemaField *field;
+  int wrote_field = 0;
   int wrote_word = 0;
 
   putchar('{');
@@ -181,7 +182,7 @@ static void print_adjacency_work_row(const MkledgerConfig *config,
       if (!schema_allows_type(field, "string"))
         continue;
 
-      if (field != config->schema.v)
+      if (wrote_field)
         putchar(',');
 
       print_json_string_to(stdout, field->field);
@@ -193,11 +194,12 @@ static void print_adjacency_work_row(const MkledgerConfig *config,
       } else {
         fputs("\"\"", stdout);
       }
+      wrote_field = 1;
     }
   }
 
   if (!wrote_word) {
-    if (config != NULL && config->schema.n != 0)
+    if (wrote_field)
       putchar(',');
     fputs("\"word\":", stdout);
     print_json_string_to(stdout, word);
