@@ -40,6 +40,7 @@ typedef struct {
   uint32_t surface;
   uint32_t sequence;
   uint32_t combine;
+  uint32_t provenance;
 } OccurrenceRecord;
 
 typedef struct {
