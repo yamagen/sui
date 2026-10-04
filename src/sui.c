@@ -1650,12 +1650,20 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
         if (append_candy) {
           FILE *fp = fopen(config->candy.filename, "a");
+          int status;
 
-          if (fp == NULL ||
-              emit_unresolved(fp, &parsed, target_end, input_end) != 0 ||
-              fclose(fp) != 0) {
-            if (fp != NULL)
-              fclose(fp);
+          if (fp == NULL) {
+            longest_path_list_free(&paths);
+            lattice_free(&lat);
+            free_sui_input(&parsed);
+            return -1;
+          }
+
+          status = emit_unresolved(fp, &parsed, target_end, input_end);
+          if (fclose(fp) != 0)
+            status = -1;
+
+          if (status != 0) {
             longest_path_list_free(&paths);
             lattice_free(&lat);
             free_sui_input(&parsed);
