@@ -60,6 +60,23 @@ typedef struct {
   size_t cap;
 } GapList;
 
+typedef enum {
+  CONTEXT_STRING,
+  CONTEXT_INTEGER
+} ContextType;
+
+typedef struct {
+  char *name;
+  ContextType type;
+  char *value;
+} ContextField;
+
+typedef struct {
+  char *text;
+  ContextField *provenance;
+  size_t nprovenance;
+} SuiInput;
+
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b);
 static void show_uncovered_adjacencies(const Ledger *ledger, const char *input,
@@ -109,7 +126,12 @@ static void show_occurrence_adjacencies(const Ledger *ledger,
                                          const Lattice *lat);
 static void show_observed_paths(const Ledger *ledger, const char *input,
                                 const Lattice *lat);
-static int process_input(const Ledger *ledger, int monitor, int unresolved);
+static void free_sui_input(SuiInput *input);
+static int parse_sui_input(const char *line, const MkledgerConfig *config,
+                           SuiInput *input);
+static void print_input_provenance(const SuiInput *input);
+static int process_input(const Ledger *ledger, const MkledgerConfig *config,
+                         int monitor, int unresolved);
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b) {
@@ -1252,18 +1274,295 @@ static int emit_observed_paths(const Ledger *ledger, const char *input,
   return 0;
 }
 
-static int process_input(const Ledger *ledger, int monitor, int unresolved) {
-  char input[4096];
-  Lattice lat;
 
-  if (fgets(input, sizeof input, stdin) == NULL)
+static void free_sui_input(SuiInput *input) {
+  ContextField *field;
+
+  free(input->text);
+
+  for (field = input->provenance;
+       field < input->provenance + input->nprovenance; field++) {
+    free(field->name);
+    free(field->value);
+  }
+
+  free(input->provenance);
+  memset(input, 0, sizeof(*input));
+}
+
+static const SchemaField *find_schema_field(const MkledgerConfig *config,
+                                            const char *name) {
+  const SchemaField *field;
+
+  for (field = config->schema.v;
+       field < config->schema.v + config->schema.n; field++)
+    if (strcmp(field->field, name) == 0)
+      return field;
+
+  return NULL;
+}
+
+static int schema_allows_type(const SchemaField *field, const char *type) {
+  char **p;
+
+  if (field == NULL)
+    return 0;
+
+  for (p = field->types; p < field->types + field->ntypes; p++)
+    if (strcmp(*p, type) == 0)
+      return 1;
+
+  return 0;
+}
+
+static char *parse_context_integer(tjson_t *json) {
+  size_t start = json->pos;
+  size_t end;
+  const char *p;
+
+  (void)tjson_parse_number(json);
+  end = json->pos;
+
+  for (p = json->text + start; p < json->text + end; p++)
+    if (*p == '.' || *p == 'e' || *p == 'E')
+      return NULL;
+
+  return strndup(json->text + start, end - start);
+}
+
+static int add_context_field(SuiInput *input, const char *name,
+                             ContextType type, char *value) {
+  ContextField *tmp;
+  ContextField *field;
+
+  tmp = realloc(input->provenance,
+                (input->nprovenance + 1) * sizeof(*input->provenance));
+  if (tmp == NULL) {
+    free(value);
+    return -1;
+  }
+
+  input->provenance = tmp;
+  field = input->provenance + input->nprovenance;
+  field->name = strdup(name);
+  if (field->name == NULL) {
+    free(value);
+    return -1;
+  }
+
+  field->type = type;
+  field->value = value;
+  input->nprovenance++;
+  return 0;
+}
+
+static int is_provenance_name(const MkledgerConfig *config, const char *name) {
+  char **p;
+
+  for (p = config->provenance;
+       p < config->provenance + config->nprovenance; p++)
+    if (strcmp(*p, name) == 0)
+      return 1;
+
+  return 0;
+}
+
+static int parse_input_provenance(tjson_t *json, const MkledgerConfig *config,
+                                  SuiInput *input) {
+  tjson_expect(json, '{');
+
+  for (;;) {
+    char *name;
+    const SchemaField *schema;
+    char *value = NULL;
+    ContextType type;
+
+    tjson_skip_ws(json);
+    if (tjson_peek(json) == '}') {
+      tjson_expect(json, '}');
+      return 0;
+    }
+
+    name = tjson_parse_string(json);
+    tjson_skip_ws(json);
+    tjson_expect(json, ':');
+    tjson_skip_ws(json);
+
+    if (!is_provenance_name(config, name)) {
+      tjson_skip_value(json);
+      free(name);
+    } else {
+      schema = find_schema_field(config, name);
+
+      if (tjson_peek(json) == '"') {
+        if (!schema_allows_type(schema, "string")) {
+          free(name);
+          return -1;
+        }
+        type = CONTEXT_STRING;
+        value = tjson_parse_string(json);
+      } else {
+        if (!schema_allows_type(schema, "integer")) {
+          free(name);
+          return -1;
+        }
+        type = CONTEXT_INTEGER;
+        value = parse_context_integer(json);
+        if (value == NULL) {
+          free(name);
+          return -1;
+        }
+      }
+
+      if (add_context_field(input, name, type, value) != 0) {
+        free(name);
+        return -1;
+      }
+      free(name);
+    }
+
+    tjson_skip_ws(json);
+    if (tjson_peek(json) == ',') {
+      tjson_expect(json, ',');
+      continue;
+    }
+    if (tjson_peek(json) == '}') {
+      tjson_expect(json, '}');
+      return 0;
+    }
+    return -1;
+  }
+}
+
+static int has_input_provenance(const SuiInput *input, const char *name) {
+  const ContextField *field;
+
+  for (field = input->provenance;
+       field < input->provenance + input->nprovenance; field++)
+    if (strcmp(field->name, name) == 0)
+      return 1;
+
+  return 0;
+}
+
+static int parse_sui_input(const char *line, const MkledgerConfig *config,
+                           SuiInput *input) {
+  tjson_t json;
+  char **required;
+
+  memset(input, 0, sizeof(*input));
+
+  if (line[0] != '{') {
+    input->text = strdup(line);
+    return input->text == NULL ? -1 : 0;
+  }
+
+  if (config == NULL || config->nprovenance == 0)
     return -1;
 
-  input[strcspn(input, "\r\n")] = '\0';
+  tjson_init(&json, "stdin", line);
+  tjson_skip_ws(&json);
+  tjson_expect(&json, '{');
 
+  for (;;) {
+    char *key;
+
+    tjson_skip_ws(&json);
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    key = tjson_parse_string(&json);
+    tjson_skip_ws(&json);
+    tjson_expect(&json, ':');
+    tjson_skip_ws(&json);
+
+    if (strcmp(key, "text") == 0)
+      input->text = tjson_parse_string(&json);
+    else if (strcmp(key, "provenance") == 0) {
+      if (parse_input_provenance(&json, config, input) != 0) {
+        free(key);
+        free_sui_input(input);
+        return -1;
+      }
+    } else
+      tjson_skip_value(&json);
+
+    free(key);
+    tjson_skip_ws(&json);
+
+    if (tjson_peek(&json) == ',') {
+      tjson_expect(&json, ',');
+      continue;
+    }
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    free_sui_input(input);
+    return -1;
+  }
+
+  tjson_skip_ws(&json);
+  if (json.pos != json.length || input->text == NULL) {
+    free_sui_input(input);
+    return -1;
+  }
+
+  for (required = config->provenance;
+       required < config->provenance + config->nprovenance; required++)
+    if (!has_input_provenance(input, *required)) {
+      free_sui_input(input);
+      return -1;
+    }
+
+  return 0;
+}
+
+static void print_input_provenance(const SuiInput *input) {
+  const ContextField *field;
+
+  fputs(",\"provenance\":{", stdout);
+
+  for (field = input->provenance;
+       field < input->provenance + input->nprovenance; field++) {
+    if (field != input->provenance)
+      putchar(',');
+
+    print_json_string(field->name);
+    putchar(':');
+
+    if (field->type == CONTEXT_STRING)
+      print_json_string(field->value);
+    else
+      fputs(field->value, stdout);
+  }
+
+  putchar('}');
+}
+
+static int process_input(const Ledger *ledger, const MkledgerConfig *config,
+                         int monitor, int unresolved) {
+  char line[4096];
+  SuiInput parsed;
+  const char *input;
+  Lattice lat;
+
+  if (fgets(line, sizeof line, stdin) == NULL)
+    return -1;
+
+  line[strcspn(line, "\r\n")] = '\0';
+
+  if (parse_sui_input(line, config, &parsed) != 0)
+    return -1;
+
+  input = parsed.text;
   lattice_init(&lat);
 
   if (make_lattice(ledger, input, &lat) != 0) {
+    free_sui_input(&parsed);
     lattice_free(&lat);
     return -1;
   }
@@ -1278,6 +1577,7 @@ static int process_input(const Ledger *ledger, int monitor, int unresolved) {
     if (make_longest_paths(ledger, input, &lat, &paths) != 0) {
       longest_path_list_free(&paths);
       lattice_free(&lat);
+      free_sui_input(&parsed);
       return -1;
     }
 
@@ -1291,21 +1591,26 @@ static int process_input(const Ledger *ledger, int monitor, int unresolved) {
       if (target_end < input_end) {
         printf("{\"start\":%zu,\"end\":%zu,\"text\":", target_end, input_end);
         print_json_string(input + target_end);
+        if (parsed.nprovenance != 0)
+          print_input_provenance(&parsed);
         fputs("}\n", stdout);
       }
     } else if (emit_observed_paths(ledger, input, &lat, target_end) != 0) {
       longest_path_list_free(&paths);
       lattice_free(&lat);
+      free_sui_input(&parsed);
       return -1;
     }
 
     longest_path_list_free(&paths);
     lattice_free(&lat);
+    free_sui_input(&parsed);
     return 0;
   }
 
   if (show_lattice_gaps(input, &lat) != 0) {
     lattice_free(&lat);
+    free_sui_input(&parsed);
     return -1;
   }
 
@@ -1320,6 +1625,7 @@ static int process_input(const Ledger *ledger, int monitor, int unresolved) {
 
     if (show_surface_combines(ledger, e->surface) != 0) {
       lattice_free(&lat);
+      free_sui_input(&parsed);
       return -1;
     }
   }
@@ -1335,6 +1641,7 @@ static int process_input(const Ledger *ledger, int monitor, int unresolved) {
   if (make_longest_paths(ledger, input, &lat, &paths) != 0) {
     longest_path_list_free(&paths);
     lattice_free(&lat);
+    free_sui_input(&parsed);
     return -1;
   }
 
@@ -1345,6 +1652,7 @@ static int process_input(const Ledger *ledger, int monitor, int unresolved) {
   longest_path_list_free(&paths);
 
   lattice_free(&lat);
+  free_sui_input(&parsed);
   return 0;
 }
 
@@ -1428,7 +1736,8 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  if (process_input(&ledger, monitor, unresolved) != 0) {
+  if (process_input(&ledger, config_path == NULL ? NULL : &config, monitor,
+                    unresolved) != 0) {
     unload_ledger(&ledger);
     free_mkledger_config(&config);
     return EXIT_FAILURE;
