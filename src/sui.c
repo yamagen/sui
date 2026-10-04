@@ -135,6 +135,7 @@ static void print_input_provenance(FILE *fp, const SuiInput *input);
 static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
                            const SuiInput *input, size_t start, size_t end);
 static char *parse_candy_text(const char *line);
+static int index_candy_surfaces(Ledger *ledger, const MkledgerConfig *config);
 static int scan_candy_surface(const MkledgerConfig *config,
                               const char *input, size_t start,
                               size_t *matched_end);
@@ -1684,6 +1685,44 @@ static char *parse_candy_text(const char *line) {
   return text;
 }
 
+static int index_candy_surfaces(Ledger *ledger,
+                                const MkledgerConfig *config) {
+  FILE *fp;
+  char line[4096];
+  uint32_t surface = ledger->null_surface;
+
+  if (config == NULL || config->candy.filename == NULL)
+    return 0;
+
+  fp = fopen(config->candy.filename, "r");
+  if (fp == NULL)
+    return 0;
+
+  while (fgets(line, sizeof line, fp) != NULL) {
+    char *text;
+
+    line[strcspn(line, "\r\n")] = '\0';
+    text = parse_candy_text(line);
+    if (text == NULL)
+      continue;
+
+    free(text);
+
+    if (surface == UINT32_MAX) {
+      fclose(fp);
+      return -1;
+    }
+
+    surface++;
+  }
+
+  if (fclose(fp) != 0)
+    return -1;
+
+  ledger->current_max_surface = surface;
+  return 0;
+}
+
 static int scan_candy_surface(const MkledgerConfig *config,
                               const char *input, size_t start,
                               size_t *matched_end) {
@@ -1981,6 +2020,14 @@ int main(int argc, char *argv[]) {
   }
 
   if (load_ledger(path, &ledger) != 0) {
+    free_mkledger_config(&config);
+    return EXIT_FAILURE;
+  }
+
+  if (index_candy_surfaces(&ledger,
+                           config_path == NULL ? NULL : &config) != 0) {
+    fprintf(stderr, "cannot index candy surfaces\n");
+    unload_ledger(&ledger);
     free_mkledger_config(&config);
     return EXIT_FAILURE;
   }
