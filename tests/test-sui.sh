@@ -47,4 +47,15 @@ resolved=$(printf '%s\n' '男につきて' | "$SUI" -u "$LEDGER")
 [ -z "$resolved" ] ||
   fail "resolved input produced unresolved output"
 
+context=$(printf '%s\n' '{"text":"男につきて何か","provenance":{"corpus":"taketori","id":37,"token":5}}' |
+  "$SUI" -c tests/ledger-config.json -u "$LEDGER")
+printf '%s\n' "$context" |
+  jq -e '
+    select(.start == 15 and .end == 21 and .text == "何か" and
+           .provenance.corpus == "taketori" and
+           .provenance.id == 37 and
+           .provenance.token == 5)
+  ' >/dev/null ||
+  fail "unresolved provenance context"
+
 echo "PASS: sui regression tests"
