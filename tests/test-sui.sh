@@ -61,7 +61,20 @@ printf '%s\n' "$context" |
 candy=$(mktemp)
 candy_config=$(mktemp)
 trap 'rm -f "$candy" "$candy_config"' EXIT
-jq --arg filename "$candy" '.candy.filename = $filename' tests/ledger-config.json >"$candy_config"
+jq --arg filename "$candy" '
+  .schema += {
+    "word": "string",
+    "lemma": "string",
+    "kana": "string",
+    "lemma-kana": "string",
+    "romaji": "string",
+    "lemma-romaji": "string",
+    "gloss": "string",
+    "pos": "string",
+    "ku": "string"
+  } |
+  .candy.filename = $filename
+' tests/ledger-config.json >"$candy_config"
 
 printf '%s\n' '{"text":"男につきて何か","provenance":{"corpus":"taketori","id":37,"token":5}}' |
   "$SUI" -c "$candy_config" -a "$LEDGER" >/dev/null
@@ -70,7 +83,16 @@ jq -e '
   select(.start == 15 and .end == 21 and .text == "何か" and
          .provenance.corpus == "taketori" and
          .provenance.id == 37 and
-         .provenance.token == 5)
+         .provenance.token == 5 and
+         .word == "" and
+         .lemma == "" and
+         .kana == "" and
+         ."lemma-kana" == "" and
+         .romaji == "" and
+         ."lemma-romaji" == "" and
+         .gloss == "" and
+         .pos == "" and
+         .ku == "")
 ' "$candy" >/dev/null ||
   fail "candy append"
 
