@@ -84,10 +84,98 @@ typedef struct {
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b);
+static int emit_adjacency_work_row(FILE *fp, const MkledgerConfig *config,
+                                   const SuiInput *input,
+                                   const LatticeEdge *edge,
+                                   const char *word) {
+  const SchemaField *field;
+
+  fprintf(fp, "!{\"start\":%zu,\"end\":%zu,\"text\":", edge->start,
+          edge->end);
+  fprintf(fp, "\"%.*s\"", (int)(edge->end - edge->start),
+          input->text + edge->start);
+
+  if (input->nprovenance != 0)
+    print_input_provenance(fp, input);
+
+  if (config != NULL) {
+    for (field = config->schema.v; field < config->schema.v + config->schema.n;
+         field++) {
+      if (is_provenance_name(config, field->field))
+        continue;
+      if (!schema_allows_type(field, "string"))
+        continue;
+
+      fputc(',', fp);
+      print_json_string_to(fp, field->field);
+      fputc(':', fp);
+      if (strcmp(field->field, "word") == 0)
+        print_json_string_to(fp, word);
+      else
+        fputs("\"\"", fp);
+    }
+  }
+
+  fputs("}\n", fp);
+  return ferror(fp) ? -1 : 0;
+}
+
+static int append_uncovered_adjacencies(const Ledger *ledger,
+                                        const MkledgerConfig *config,
+                                        const SuiInput *input,
+                                        const Lattice *lat,
+                                        const LongestPathList *list) {
+  const LatticeEdge *a;
+  const LatticeEdge *b;
+  FILE *fp;
+
+  if (config == NULL || config->candy.filename == NULL)
+    return 0;
+
+  fp = fopen(config->candy.filename, "a");
+  if (fp == NULL)
+    return -1;
+
+  for (a = lat->v; a < lat->v + lat->n; a++) {
+    for (b = lat->v; b < lat->v + lat->n; b++) {
+      const char *as;
+      const char *bs;
+
+      if (!lattice_edges_connect(input->text, a, b))
+        continue;
+      if (reach_covers_adjacency(list, a, b))
+        continue;
+
+      as = a->surface > ledger->null_surface
+               ? runtime_surface_string(ledger, a->surface)
+               : surface_string(ledger, a->surface);
+      bs = b->surface > ledger->null_surface
+               ? runtime_surface_string(ledger, b->surface)
+               : surface_string(ledger, b->surface);
+
+      if (as == NULL || bs == NULL)
+        continue;
+
+      if (emit_adjacency_work_row(fp, config, input, a, as) != 0 ||
+          emit_adjacency_work_row(fp, config, input, b, bs) != 0) {
+        fclose(fp);
+        return -1;
+      }
+    }
+  }
+
+  return fclose(fp) == 0 ? 0 : -1;
+}
+
 static void show_uncovered_adjacencies(const Ledger *ledger,
                                        const MkledgerConfig *config,
                                        const char *input, const Lattice *lat,
                                        const LongestPathList *list);
+static int append_uncovered_adjacencies(const Ledger *ledger,
+                                        const MkledgerConfig *config,
+                                        const SuiInput *input,
+                                        const Lattice *lat,
+                                        const LongestPathList *list);
 
 static int schema_allows_type(const SchemaField *field, const char *type);
 static int is_provenance_name(const MkledgerConfig *config, const char *name);
@@ -1982,6 +2070,15 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
         target_end = known_end;
       }
+    }
+
+    if (append_candy &&
+        append_uncovered_adjacencies(ledger, config, &parsed, &lat, &paths) !=
+            0) {
+      longest_path_list_free(&paths);
+      lattice_free(&lat);
+      free_sui_input(&parsed);
+      return -1;
     }
 
     if (unresolved) {
