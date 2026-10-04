@@ -132,6 +132,7 @@ static int parse_sui_input(const char *line, const MkledgerConfig *config,
 static void print_input_provenance(FILE *fp, const SuiInput *input);
 static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
                            const SuiInput *input, size_t start, size_t end);
+static char *parse_candy_text(const char *line);
 static int scan_candy_surface(const MkledgerConfig *config,
                               const char *input, size_t start,
                               size_t *matched_end);
@@ -1616,6 +1617,62 @@ static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
   return ferror(fp) ? -1 : 0;
 }
 
+static char *parse_candy_text(const char *line) {
+  tjson_t json;
+  char *text = NULL;
+
+  if (line[0] != '!')
+    return NULL;
+
+  tjson_init(&json, "candy", line + 1);
+  tjson_skip_ws(&json);
+  tjson_expect(&json, '{');
+
+  for (;;) {
+    char *key;
+
+    tjson_skip_ws(&json);
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    key = tjson_parse_string(&json);
+    tjson_skip_ws(&json);
+    tjson_expect(&json, ':');
+    tjson_skip_ws(&json);
+
+    if (strcmp(key, "text") == 0) {
+      free(text);
+      text = tjson_parse_string(&json);
+    } else
+      tjson_skip_value(&json);
+
+    free(key);
+    tjson_skip_ws(&json);
+
+    if (tjson_peek(&json) == ',') {
+      tjson_expect(&json, ',');
+      continue;
+    }
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    free(text);
+    return NULL;
+  }
+
+  tjson_skip_ws(&json);
+  if (json.pos != json.length) {
+    free(text);
+    return NULL;
+  }
+
+  return text;
+}
+
 static int scan_candy_surface(const MkledgerConfig *config,
                               const char *input, size_t start,
                               size_t *matched_end) {
@@ -1634,27 +1691,24 @@ static int scan_candy_surface(const MkledgerConfig *config,
     return 0;
 
   while (fgets(line, sizeof line, fp) != NULL) {
-    SuiInput candy;
+    char *text;
     size_t len;
 
     line[strcspn(line, "\r\n")] = '\0';
-
-    if (line[0] != '!')
+    text = parse_candy_text(line);
+    if (text == NULL)
       continue;
 
-    if (parse_sui_input(line + 1, config, &candy) != 0)
-      continue;
-
-    len = strlen(candy.text);
+    len = strlen(text);
 
     if (len != 0 && start + len <= input_end &&
-        memcmp(input + start, candy.text, len) == 0 &&
+        memcmp(input + start, text, len) == 0 &&
         start + len > *matched_end) {
       *matched_end = start + len;
       found = 1;
     }
 
-    free_sui_input(&candy);
+    free(text);
   }
 
   if (fclose(fp) != 0)
