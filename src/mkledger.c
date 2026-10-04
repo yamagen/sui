@@ -1523,6 +1523,43 @@ static int write_combine_section(FILE *fp, const LedgerInput *in,
   return 0;
 }
 
+static int write_occurrence_section(FILE *fp, const LedgerInput *in,
+                                    char **surfacev,
+                                    size_t unique_surfaces) {
+  OccurrenceSectionHeader section;
+  const Token *token;
+
+  if (in->ntokens > UINT32_MAX)
+    return -1;
+
+  section.magic = OCCURRENCE_MAGIC;
+  section.version = 1;
+  section.noccurrences = (uint32_t)in->ntokens;
+
+  if (fwrite(&section, sizeof section, 1, fp) != 1)
+    return -1;
+
+  for (token = in->tokenv; token < in->tokenv + in->ntokens; token++) {
+    OccurrenceRecord record;
+    size_t surface;
+
+    surface = find_surface(surfacev, unique_surfaces, token->surface);
+
+    if (surface == SIZE_MAX || surface > UINT32_MAX ||
+        token->sequence > UINT32_MAX || token->combine > UINT32_MAX)
+      return -1;
+
+    record.surface = (uint32_t)surface;
+    record.sequence = (uint32_t)token->sequence;
+    record.combine = (uint32_t)token->combine;
+
+    if (fwrite(&record, sizeof record, 1, fp) != 1)
+      return -1;
+  }
+
+  return 0;
+}
+
 static int write_ledger(const char *path, const Trie *trie,
                         const LedgerInput *in, const MkledgerConfig *config,
                         char **surfacev, size_t unique_surfaces) {
@@ -1587,6 +1624,12 @@ static int write_ledger(const char *path, const Trie *trie,
 
   if (write_combine_section(fp, in, config, surfacev, unique_surfaces) != 0) {
     fprintf(stderr, "cannot write combine section\n");
+    fclose(fp);
+    return -1;
+  }
+
+  if (write_occurrence_section(fp, in, surfacev, unique_surfaces) != 0) {
+    fprintf(stderr, "cannot write occurrence section\n");
     fclose(fp);
     return -1;
   }
