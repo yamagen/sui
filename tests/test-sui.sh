@@ -38,12 +38,12 @@ printf '%s\n' "$unconnected" |
   ' >/dev/null ||
   fail "unconnected continuation"
 
-unresolved=$(printf '%s\\n' '男につきて何か' | "$SUI" -u "$LEDGER")
-printf '%s\\n' "$unresolved" |
+unresolved=$(printf '%s\n' '男につきて何か' | "$SUI" -u "$LEDGER")
+printf '%s\n' "$unresolved" |
   jq -e 'select(.start == 15 and .end == 21 and .text == "何か")' >/dev/null ||
   fail "unresolved tail"
 
-resolved=$(printf '%s\\n' '男につきて' | "$SUI" -u "$LEDGER")
+resolved=$(printf '%s\n' '男につきて' | "$SUI" -u "$LEDGER")
 [ -z "$resolved" ] ||
   fail "resolved input produced unresolved output"
 
