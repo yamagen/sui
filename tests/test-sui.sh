@@ -39,7 +39,11 @@ printf '%s\n' "$unconnected" |
   fail "unconnected continuation"
 
 unresolved=$(printf '%s\n' '男につきて何か' | "$SUI" -u "$LEDGER")
-printf '%s\n' "$unresolved" |
+case "$unresolved" in
+  '!'{*) ;;
+  *) fail "unresolved marker" ;;
+esac
+printf '%s\n' "${unresolved#!}" |
   jq -e 'select(.start == 15 and .end == 21 and .text == "何か")' >/dev/null ||
   fail "unresolved tail"
 
@@ -49,7 +53,11 @@ resolved=$(printf '%s\n' '男につきて' | "$SUI" -u "$LEDGER")
 
 context=$(printf '%s\n' '{"text":"男につきて何か","provenance":{"corpus":"taketori","id":37,"token":5}}' |
   "$SUI" -c tests/ledger-config.json -u "$LEDGER")
-printf '%s\n' "$context" |
+case "$context" in
+  '!'{*) ;;
+  *) fail "unresolved provenance marker" ;;
+esac
+printf '%s\n' "${context#!}" |
   jq -e '
     select(.start == 15 and .end == 21 and .text == "何か" and
            .provenance.corpus == "taketori" and
@@ -79,6 +87,12 @@ jq --arg filename "$candy" '
 printf '%s\n' '{"text":"男につきて何か","provenance":{"corpus":"taketori","id":37,"token":5}}' |
   "$SUI" -c "$candy_config" -a "$LEDGER" >/dev/null
 
+candy_line=$(cat "$candy")
+case "$candy_line" in
+  '!'{*) ;;
+  *) fail "candy marker" ;;
+esac
+printf '%s\n' "${candy_line#!}" |
 jq -e '
   select(.start == 15 and .end == 21 and .text == "何か" and
          .provenance.corpus == "taketori" and
@@ -93,7 +107,7 @@ jq -e '
          .gloss == "" and
          .pos == "" and
          .ku == "")
-' "$candy" >/dev/null ||
+' >/dev/null ||
   fail "candy append"
 
 echo "PASS: sui regression tests"
