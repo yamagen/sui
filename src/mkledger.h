@@ -44,6 +44,7 @@ typedef struct {
   char *surface;
   size_t sequence;
   size_t combine;
+  size_t provenance;
 } Token;
 
 typedef struct {
