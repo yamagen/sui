@@ -12,9 +12,11 @@ sui: src/sui.c src/tiny-json.c src/tiny-json.h
 tiny-json: src/tiny-json.c src/tiny-json.h
 	$(CC) $(CFLAGS) -DTJTEST -o $@ src/tiny-json.c
 
+test: all
+	sh ./tests/test-sui.sh
 
 clean:
 	rm -f mkledger sui tiny-json
 
-.PHONY: all clean
+.PHONY: all test clean
 
