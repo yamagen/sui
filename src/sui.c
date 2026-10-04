@@ -108,7 +108,7 @@ static void show_occurrence_adjacencies(const Ledger *ledger,
                                          const Lattice *lat);
 static void show_observed_paths(const Ledger *ledger, const char *input,
                                 const Lattice *lat);
-static int process_input(const Ledger *ledger, int monitor);
+static int process_input(const Ledger *ledger, int monitor, int unresolved);
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b) {
