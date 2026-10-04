@@ -8,7 +8,7 @@ ConfigKey get_config_key(const char *name) {
   static const ConfigKeyMap map[] = {
       {"version", CONFIG_VERSION},       {"filename", CONFIG_FILENAME},
       {"ledger", CONFIG_LEDGER},         {"schema", CONFIG_SCHEMA},
-      {"provenance", CONFIG_PROVENANCE},
+      {"provenance", CONFIG_PROVENANCE}, {"candy", CONFIG_CANDY},
   };
   const ConfigKeyMap *p;
 
@@ -50,6 +50,9 @@ void monitor_config(const MkledgerConfig *config) {
        type < config->provenance + config->nprovenance; type++)
     printf(" %s", *type);
   putchar('\n');
+
+  printf("candy.filename: %s\n",
+         config->candy.filename == NULL ? "" : config->candy.filename);
 }
 
 void parse_string_array(tjson_t *json, char ***values, size_t *nvalues) {
@@ -155,6 +158,7 @@ void free_mkledger_config(MkledgerConfig *config) {
   for (p = config->provenance; p < config->provenance + config->nprovenance; p++)
     free(*p);
   free(config->provenance);
+  free(config->candy.filename);
 
   memset(config, 0, sizeof(*config));
 }
@@ -200,6 +204,9 @@ int load_mkledger_config(const char *path, MkledgerConfig *config) {
       break;
     case CONFIG_PROVENANCE:
       parse_string_array(&json, &config->provenance, &config->nprovenance);
+      break;
+    case CONFIG_CANDY:
+      parse_candy_config(&json, &config->candy);
       break;
     case CONFIG_UNKNOWN:
       tjson_skip_value(&json);
@@ -306,6 +313,41 @@ void parse_schema_config(tjson_t *json, Schema *schema) {
 
     schema->n++;
     tjson_skip_ws(json);
+    if (tjson_peek(json) == ',') {
+      tjson_expect(json, ',');
+      continue;
+    }
+    if (tjson_peek(json) == '}') {
+      tjson_expect(json, '}');
+      return;
+    }
+  }
+}
+
+void parse_candy_config(tjson_t *json, CandyConfig *candy) {
+  tjson_expect(json, '{');
+
+  for (;;) {
+    char *key;
+
+    tjson_skip_ws(json);
+    if (tjson_peek(json) == '}') {
+      tjson_expect(json, '}');
+      return;
+    }
+
+    key = tjson_parse_string(json);
+    tjson_skip_ws(json);
+    tjson_expect(json, ':');
+
+    if (strcmp(key, "filename") == 0)
+      candy->filename = tjson_parse_string(json);
+    else
+      tjson_skip_value(json);
+
+    free(key);
+    tjson_skip_ws(json);
+
     if (tjson_peek(json) == ',') {
       tjson_expect(json, ',');
       continue;
