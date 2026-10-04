@@ -31,6 +31,7 @@ typedef struct {
   const TrieNode *trie;
   const uint32_t *surface_offset;
   const char *surface_strings;
+  const CombineSectionHeader *combine;
 } Ledger;
 
 typedef struct {
@@ -371,6 +372,106 @@ static int show_lattice_gaps(const char *input, const Lattice *lat) {
   return 0;
 }
 
+static const char *skip_ledger_field(const char *p, const char *end) {
+  const LedgerFieldHeader *field;
+
+  if ((size_t)(end - p) < sizeof *field)
+    return NULL;
+
+  field = (const LedgerFieldHeader *)p;
+  p += sizeof *field;
+
+  if (field->name_bytes > (size_t)(end - p))
+    return NULL;
+  p += field->name_bytes;
+
+  if (field->value_bytes > (size_t)(end - p))
+    return NULL;
+
+  return p + field->value_bytes;
+}
+
+static int find_combine_section(Ledger *ledger) {
+  const char *p;
+  const char *end;
+  uint32_t i;
+
+  end = (const char *)ledger->map + ledger->size;
+  p = ledger->surface_strings;
+
+  for (i = 0; i < ledger->header->unique_surfaces; i++) {
+    size_t remaining = (size_t)(end - p);
+    const char *nul = memchr(p, '\0', remaining);
+
+    if (nul == NULL)
+      return -1;
+
+    p = nul + 1;
+  }
+
+  if ((size_t)(end - p) < sizeof *ledger->combine)
+    return -1;
+
+  ledger->combine = (const CombineSectionHeader *)p;
+
+  if (ledger->combine->magic != COMBINE_MAGIC || ledger->combine->version != 1)
+    return -1;
+
+  return 0;
+}
+
+static int count_ledger_provenance(const Ledger *ledger,
+                                   uint32_t *nprovenance) {
+  const char *p = (const char *)(ledger->combine + 1);
+  const char *end = (const char *)ledger->map + ledger->size;
+  uint32_t total = 0;
+  uint32_t i;
+
+  for (i = 0; i < ledger->combine->ncombines; i++) {
+    const CombineRecordHeader *combine;
+    uint32_t j;
+
+    if ((size_t)(end - p) < sizeof *combine)
+      return -1;
+
+    combine = (const CombineRecordHeader *)p;
+    p += sizeof *combine;
+
+    for (j = 0; j < combine->nfields; j++) {
+      p = skip_ledger_field(p, end);
+      if (p == NULL)
+        return -1;
+    }
+
+    if (combine->nprovenance > UINT32_MAX - total)
+      return -1;
+    total += combine->nprovenance;
+
+    for (j = 0; j < combine->nprovenance; j++) {
+      const ProvenanceRecordHeader *provenance;
+      uint32_t k;
+
+      if ((size_t)(end - p) < sizeof *provenance)
+        return -1;
+
+      provenance = (const ProvenanceRecordHeader *)p;
+      p += sizeof *provenance;
+
+      for (k = 0; k < provenance->nfields; k++) {
+        p = skip_ledger_field(p, end);
+        if (p == NULL)
+          return -1;
+      }
+    }
+  }
+
+  if (p != end)
+    return -1;
+
+  *nprovenance = total;
+  return 0;
+}
+
 static void unload_ledger(Ledger *ledger) { munmap(ledger->map, ledger->size); }
 
 static int load_ledger(const char *path, Ledger *ledger) {
@@ -422,6 +523,12 @@ static int load_ledger(const char *path, Ledger *ledger) {
 
   ledger->surface_strings =
       (const char *)(ledger->surface_offset + ledger->header->unique_surfaces);
+
+  if (find_combine_section(ledger) != 0) {
+    fprintf(stderr, "invalid combine section\n");
+    munmap(ledger->map, ledger->size);
+    return -1;
+  }
 
   return 0;
 }
@@ -638,6 +745,17 @@ int main(int argc, char *argv[]) {
   printf("version:         %u\n", ledger.header->version);
   printf("trie nodes:      %u\n", ledger.header->trie_nodes);
   printf("unique surfaces: %u\n", ledger.header->unique_surfaces);
+  printf("combines:        %u\n", ledger.combine->ncombines);
+
+  uint32_t nprovenance;
+
+  if (count_ledger_provenance(&ledger, &nprovenance) != 0) {
+    fprintf(stderr, "invalid combine records\n");
+    unload_ledger(&ledger);
+    return EXIT_FAILURE;
+  }
+
+  printf("provenance:      %u\n", nprovenance);
 
   printf("root token:      %u\n", ledger.trie[0].token);
   printf("root child:      %u\n", ledger.trie[0].child);
