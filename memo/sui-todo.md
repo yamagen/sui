@@ -1328,78 +1328,92 @@ compiled trie は **確認済み実績**であり、`sui.c` の第一優先情�
 
 ## 6. ledger-candy.jsonl
 
-新規作品を解析している途中で、compiled ledger だけではうまく解析できない場合がある。
+新規作品を解析している途中で、compiled ledger だけでは先へ進めない箇所が現れる。
 
-その際に、
+そのとき SUI は unresolved record を
 
 ```text
 ledger-candy.jsonl
 ```
 
-へ解析補助を追加する。
+へ append して停止する。
 
-これは compile せず、`sui.c` 起動時に flat JSONL として読み、memory 上に置く。
-
-構造は、
+`ledger-candy.jsonl` は compile しない。解析中だけ存在する **editable working ledger / overlay** であり、人間が Neovim 等で開いたまま加筆・修正する。
 
 ```text
-ledger-candy.jsonl
-    |
-    | load into memory
-    | primary lookup
-    v
-   hit ─────────────→ candidate
-    |
-   miss
-    v
-compiled ledger.dat
-    |
-    | mmap lookup
-    v
-candidate
+SUI
+ ↓
+unresolved
+ ↓ append
+ledger-candy.jsonl  ←→  editor
+ ↓                     加筆・修正
+save
+ ↓
+SUI が再開
 ```
 
-となる。
+candy に入っていることは、その解析が確定していることを意味しない。SUI が先へ進むために人間が暫定的に与えた解析であり、必要なら何度でも修正する。
 
-`ledger-candy.jsonl` は単なる disposable temporary file ではない。**どの解析に人間の補助が必要だったかという intervention history** でもあるので、成功後も残してよい。
+したがって、
+
+```text
+ledger.dat          = confirmed / compiled evidence
+ledger-candy.jsonl  = provisional / editable evidence
+```
+
+と区別する。
+
+candy は最終 ledger の素材として直接昇格させない。新規作品の解析が完了すれば、その完成した corpus JSON が正本となり、candy は不要になる。
 
 ---
 
 ## 7. 新規作品の運用
 
-伊勢物語・土佐日記で既存解析を ledger 化し、それを使って `sui.c` を開発・答え合わせする。
-
-その後、たとえば竹取物語を新規解析するときには、解析期間中は **ledger.jsonl を固定**する。
-
-新しく必要になった知識は、
+たとえば伊勢物語・土佐日記を確認済み corpus として竹取物語を解析する場合、
 
 ```text
-ledger-candy.jsonl
+{ise,tosa}.json
+      ↓
+ ledger.jsonl
+      ↓
+   mkledger
+      ↓
+  ledger.dat
+      ↓
+ taketori.json を SUI で解析
+      ↓
+未知で停止
+      ↓
+ledger-candy.jsonl に append
+      ↓
+人間が加筆・修正して保存
+      ↓
+SUI が再開
+      ↓
+     ...
+      ↓
+taketori.json 完成
+      ↓
+   glosslint
+      ↓
+検証完了
+      ↓
+{ise,tosa,taketori}.json
+      ↓
+ ledger.jsonl
+      ↓
+   mkledger
+      ↓
+新しい ledger.dat
 ```
 
-にだけ追加する。
+となる。
 
-竹取物語が完成した段階で candy を精査し、確認済みになったものをまとめて `ledger.jsonl` へ昇格する。
+重要なのは、`ledger-candy.jsonl` を次世代の `ledger.jsonl` へ append しないことである。確定した知識は、glosslint を通った完成 corpus から毎回再生成する。
 
-つまり、
+したがって candy の寿命は一作品の解析期間だけであり、作品が完成して新しい `ledger.dat` が作られた時点で役目を終える。
 
-```text
-Ise / Tosa
-   ↓
-stable ledger
-   ↓
-Taketori analysis
-   ↓
-candy grows
-   ↓
-Taketori complete
-   ↓
-accepted candy
-   ↓
-ledger update
-```
-
-という周期。
+この方式では、人間に schema の完全性を期待しない。解析中の candy では入力忘れや修正がありうるが、完成 corpus を glosslint で検証してから ledger を再生成するため、schema drift や field omission を次世代の `ledger.dat` に持ち込まない。
 
 ---
 
