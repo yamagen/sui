@@ -37,6 +37,9 @@ typedef struct {
   const OccurrenceRecord *occurrencev;
   uint32_t null_surface;
   uint32_t current_max_surface;
+  char **runtime_surface_strings;
+  size_t runtime_surface_count;
+  size_t runtime_surface_cap;
 } Ledger;
 
 typedef struct {
@@ -107,6 +110,8 @@ static int find_lattice_gaps(const char *input, const Lattice *lat,
                              GapList *gaps);
 static int show_lattice_gaps(const char *input, const Lattice *lat);
 static void unload_ledger(Ledger *ledger);
+static const char *runtime_surface_string(const Ledger *ledger,
+                                          uint32_t surface);
 static int load_ledger(const char *path, Ledger *ledger);
 static int make_lattice(const Ledger *ledger, const char *input, Lattice *lat);
 static uint32_t trie_find(const Ledger *ledger, uint32_t node,
@@ -875,7 +880,30 @@ static int show_surface_combines(const Ledger *ledger, uint32_t surface) {
   return 0;
 }
 
-static void unload_ledger(Ledger *ledger) { munmap(ledger->map, ledger->size); }
+static const char *runtime_surface_string(const Ledger *ledger,
+                                          uint32_t surface) {
+  size_t index;
+
+  if (surface <= ledger->null_surface ||
+      surface > ledger->current_max_surface)
+    return NULL;
+
+  index = (size_t)(surface - ledger->null_surface - 1);
+  if (index >= ledger->runtime_surface_count)
+    return NULL;
+
+  return ledger->runtime_surface_strings[index];
+}
+
+static void unload_ledger(Ledger *ledger) {
+  size_t i;
+
+  for (i = 0; i < ledger->runtime_surface_count; i++)
+    free(ledger->runtime_surface_strings[i]);
+  free(ledger->runtime_surface_strings);
+
+  munmap(ledger->map, ledger->size);
+}
 
 static int load_ledger(const char *path, Ledger *ledger) {
   int fd;
@@ -926,6 +954,9 @@ static int load_ledger(const char *path, Ledger *ledger) {
 
   ledger->null_surface = ledger->header->unique_surfaces + 2;
   ledger->current_max_surface = ledger->null_surface;
+  ledger->runtime_surface_strings = NULL;
+  ledger->runtime_surface_count = 0;
+  ledger->runtime_surface_cap = 0;
 
   ledger->trie =
       (const TrieNode *)((const char *)ledger->map + sizeof(LedgerHeader));
@@ -1707,13 +1738,29 @@ static int index_candy_surfaces(Ledger *ledger,
     if (text == NULL)
       continue;
 
-    free(text);
-
     if (surface == UINT32_MAX) {
+      free(text);
       fclose(fp);
       return -1;
     }
 
+    if (ledger->runtime_surface_count == ledger->runtime_surface_cap) {
+      size_t new_cap =
+          ledger->runtime_surface_cap == 0 ? 16 : ledger->runtime_surface_cap * 2;
+      char **new_strings =
+          realloc(ledger->runtime_surface_strings, new_cap * sizeof(*new_strings));
+
+      if (new_strings == NULL) {
+        free(text);
+        fclose(fp);
+        return -1;
+      }
+
+      ledger->runtime_surface_strings = new_strings;
+      ledger->runtime_surface_cap = new_cap;
+    }
+
+    ledger->runtime_surface_strings[ledger->runtime_surface_count++] = text;
     surface++;
   }
 
@@ -1721,6 +1768,11 @@ static int index_candy_surfaces(Ledger *ledger,
     return -1;
 
   ledger->current_max_surface = surface;
+
+  if (ledger->runtime_surface_count != 0 &&
+      runtime_surface_string(ledger, ledger->current_max_surface) == NULL)
+    return -1;
+
   return 0;
 }
 
