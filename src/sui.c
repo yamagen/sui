@@ -110,6 +110,7 @@ static int find_lattice_gaps(const char *input, const Lattice *lat,
                              GapList *gaps);
 static int show_lattice_gaps(const char *input, const Lattice *lat);
 static void unload_ledger(Ledger *ledger);
+static const char *surface_string(const Ledger *ledger, uint32_t surface);
 static const char *runtime_surface_string(const Ledger *ledger,
                                           uint32_t surface);
 static int load_ledger(const char *path, Ledger *ledger);
@@ -176,8 +177,18 @@ static void show_uncovered_adjacencies(const Ledger *ledger, const char *input,
       if (reach_covers_adjacency(list, a, b))
         continue;
 
-      as = ledger->surface_strings + ledger->surface_offset[a->surface];
-      bs = ledger->surface_strings + ledger->surface_offset[b->surface];
+      if (a->surface > ledger->null_surface)
+        as = runtime_surface_string(ledger, a->surface);
+      else
+        as = surface_string(ledger, a->surface);
+
+      if (b->surface > ledger->null_surface)
+        bs = runtime_surface_string(ledger, b->surface);
+      else
+        bs = surface_string(ledger, b->surface);
+
+      if (as == NULL || bs == NULL)
+        continue;
 
       printf("add an adjacency of A with B: %.*s[%.*s]%s\n", (int)a->start,
              input, (int)(b->end - a->start), input + a->start, input + b->end);
@@ -880,6 +891,13 @@ static int show_surface_combines(const Ledger *ledger, uint32_t surface) {
   return 0;
 }
 
+static const char *surface_string(const Ledger *ledger, uint32_t surface) {
+  if (surface >= ledger->header->unique_surfaces)
+    return NULL;
+
+  return ledger->surface_strings + ledger->surface_offset[surface];
+}
+
 static const char *runtime_surface_string(const Ledger *ledger,
                                           uint32_t surface) {
   size_t index;
@@ -990,10 +1008,25 @@ static int make_lattice(const Ledger *ledger, const char *input, Lattice *lat) {
     uint32_t id;
 
     for (id = 0; id < ledger->header->unique_surfaces; id++) {
-      const char *surface =
-          ledger->surface_strings + ledger->surface_offset[id];
+      const char *surface = surface_string(ledger, id);
       size_t len = strlen(surface);
 
+      if (start + len <= input_len &&
+          memcmp(input + start, surface, len) == 0) {
+        if (lattice_add(lat, start, start + len, id) != 0)
+          return -1;
+      }
+    }
+
+    for (id = ledger->null_surface + 1;
+         id <= ledger->current_max_surface; id++) {
+      const char *surface = runtime_surface_string(ledger, id);
+      size_t len;
+
+      if (surface == NULL)
+        continue;
+
+      len = strlen(surface);
       if (start + len <= input_len &&
           memcmp(input + start, surface, len) == 0) {
         if (lattice_add(lat, start, start + len, id) != 0)
@@ -1007,7 +1040,12 @@ static int make_lattice(const Ledger *ledger, const char *input, Lattice *lat) {
 
 static uint32_t trie_find(const Ledger *ledger, uint32_t node,
                           uint32_t surface) {
-  uint32_t p = ledger->trie[node].child;
+  uint32_t p;
+
+  if (surface >= ledger->header->unique_surfaces)
+    return TRIE_NONE;
+
+  p = ledger->trie[node].child;
 
   while (p != TRIE_NONE) {
     if (ledger->trie[p].token == surface)
@@ -1023,8 +1061,7 @@ static void follow_path(const Ledger *ledger, const char *input,
                         const Lattice *lat, size_t edge_index, uint32_t node,
                         size_t depth) {
   const LatticeEdge *edge = &lat->v[edge_index];
-  const char *surface =
-      ledger->surface_strings + ledger->surface_offset[edge->surface];
+  const char *surface = surface_string(ledger, edge->surface);
   size_t i;
 
   printf("%*s%s\tfreq=%u\n", (int)(depth * 2), "", surface,
@@ -1956,12 +1993,20 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
   for (size_t i = 0; i < lat.n; i++) {
     const LatticeEdge *e = &lat.v[i];
-    const char *surface =
-        ledger->surface_strings + ledger->surface_offset[e->surface];
+    const char *surface;
+
+    if (e->surface > ledger->null_surface)
+      surface = runtime_surface_string(ledger, e->surface);
+    else
+      surface = surface_string(ledger, e->surface);
+
+    if (surface == NULL)
+      continue;
 
     printf("%zu\t%zu\t%u\t%s\n", e->start, e->end, e->surface, surface);
 
-    if (show_surface_combines(ledger, e->surface) != 0) {
+    if (e->surface < ledger->header->unique_surfaces &&
+        show_surface_combines(ledger, e->surface) != 0) {
       lattice_free(&lat);
       free_sui_input(&parsed);
       return -1;
