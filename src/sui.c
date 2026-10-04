@@ -84,6 +84,81 @@ typedef struct {
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b);
+static void show_uncovered_adjacencies(const Ledger *ledger,
+                                       const MkledgerConfig *config,
+                                       const char *input, const Lattice *lat,
+                                       const LongestPathList *list);
+static int append_uncovered_adjacencies(const Ledger *ledger,
+                                        const MkledgerConfig *config,
+                                        const SuiInput *input,
+                                        const Lattice *lat,
+                                        const LongestPathList *list);
+
+static int schema_allows_type(const SchemaField *field, const char *type);
+static int is_provenance_name(const MkledgerConfig *config, const char *name);
+static void print_json_string_to(FILE *fp, const char *s);
+
+static void longest_path_list_init(LongestPathList *list);
+static void longest_path_list_free(LongestPathList *list);
+static int longest_path_list_add(LongestPathList *list,
+                                 const LongestPath *path);
+
+static int is_separator(const char *input, size_t start, size_t end);
+static int lattice_edges_connect(const char *input, const LatticeEdge *a,
+                                 const LatticeEdge *b);
+
+static void lattice_init(Lattice *lat);
+static void lattice_free(Lattice *lat);
+static int lattice_add(Lattice *lat, size_t start, size_t end,
+                       uint32_t surface);
+
+static void gaplist_init(GapList *gaps);
+static void gaplist_free(GapList *gaps);
+static int gaplist_add(GapList *gaps, size_t start, size_t end);
+static size_t utf8_next(const char *s, size_t pos);
+static int find_lattice_gaps(const char *input, const Lattice *lat,
+                             GapList *gaps);
+static int show_lattice_gaps(const char *input, const Lattice *lat);
+static void unload_ledger(Ledger *ledger);
+static const char *surface_string(const Ledger *ledger, uint32_t surface);
+static const char *runtime_surface_string(const Ledger *ledger,
+                                          uint32_t surface);
+static int load_ledger(const char *path, Ledger *ledger);
+static int make_lattice(const Ledger *ledger, const char *input, Lattice *lat);
+static uint32_t trie_find(const Ledger *ledger, uint32_t node,
+                          uint32_t surface);
+static void follow_path(const Ledger *ledger, const char *input,
+                        const Lattice *lat, size_t edge_index, uint32_t node,
+                        size_t depth);
+static void show_paths(const Ledger *ledger, const char *input,
+                       const Lattice *lat);
+static void find_longest_from(const Ledger *ledger, const char *input,
+                              const Lattice *lat, size_t edge_index,
+                              uint32_t node, size_t depth, LongestPath *best);
+static int make_longest_paths(const Ledger *ledger, const char *input,
+                              const Lattice *lat, LongestPathList *list);
+static void show_longest_paths(const char *input, const LongestPathList *list);
+static void show_reach(const LongestPathList *list);
+static void show_occurrence_adjacencies(const Ledger *ledger,
+                                         const char *input,
+                                         const Lattice *lat);
+static void show_observed_paths(const Ledger *ledger, const char *input,
+                                const Lattice *lat);
+static void free_sui_input(SuiInput *input);
+static int parse_sui_input(const char *line, const MkledgerConfig *config,
+                           SuiInput *input);
+static void print_input_provenance(FILE *fp, const SuiInput *input);
+static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
+                           const SuiInput *input, size_t start, size_t end);
+static char *parse_candy_text(const char *line);
+static int index_candy_surfaces(Ledger *ledger, const MkledgerConfig *config);
+static int scan_candy_surface(const Ledger *ledger,
+                              const MkledgerConfig *config,
+                              const char *input, size_t start,
+                              size_t *matched_end, uint32_t *matched_surface);
+static int process_input(const Ledger *ledger, const MkledgerConfig *config,
+                         int monitor, int unresolved, int append_candy);
+
 static int emit_adjacency_work_row(FILE *fp, const MkledgerConfig *config,
                                    const SuiInput *input,
                                    const LatticeEdge *edge,
@@ -166,81 +241,6 @@ static int append_uncovered_adjacencies(const Ledger *ledger,
 
   return fclose(fp) == 0 ? 0 : -1;
 }
-
-static void show_uncovered_adjacencies(const Ledger *ledger,
-                                       const MkledgerConfig *config,
-                                       const char *input, const Lattice *lat,
-                                       const LongestPathList *list);
-static int append_uncovered_adjacencies(const Ledger *ledger,
-                                        const MkledgerConfig *config,
-                                        const SuiInput *input,
-                                        const Lattice *lat,
-                                        const LongestPathList *list);
-
-static int schema_allows_type(const SchemaField *field, const char *type);
-static int is_provenance_name(const MkledgerConfig *config, const char *name);
-static void print_json_string_to(FILE *fp, const char *s);
-
-static void longest_path_list_init(LongestPathList *list);
-static void longest_path_list_free(LongestPathList *list);
-static int longest_path_list_add(LongestPathList *list,
-                                 const LongestPath *path);
-
-static int is_separator(const char *input, size_t start, size_t end);
-static int lattice_edges_connect(const char *input, const LatticeEdge *a,
-                                 const LatticeEdge *b);
-
-static void lattice_init(Lattice *lat);
-static void lattice_free(Lattice *lat);
-static int lattice_add(Lattice *lat, size_t start, size_t end,
-                       uint32_t surface);
-
-static void gaplist_init(GapList *gaps);
-static void gaplist_free(GapList *gaps);
-static int gaplist_add(GapList *gaps, size_t start, size_t end);
-static size_t utf8_next(const char *s, size_t pos);
-static int find_lattice_gaps(const char *input, const Lattice *lat,
-                             GapList *gaps);
-static int show_lattice_gaps(const char *input, const Lattice *lat);
-static void unload_ledger(Ledger *ledger);
-static const char *surface_string(const Ledger *ledger, uint32_t surface);
-static const char *runtime_surface_string(const Ledger *ledger,
-                                          uint32_t surface);
-static int load_ledger(const char *path, Ledger *ledger);
-static int make_lattice(const Ledger *ledger, const char *input, Lattice *lat);
-static uint32_t trie_find(const Ledger *ledger, uint32_t node,
-                          uint32_t surface);
-static void follow_path(const Ledger *ledger, const char *input,
-                        const Lattice *lat, size_t edge_index, uint32_t node,
-                        size_t depth);
-static void show_paths(const Ledger *ledger, const char *input,
-                       const Lattice *lat);
-static void find_longest_from(const Ledger *ledger, const char *input,
-                              const Lattice *lat, size_t edge_index,
-                              uint32_t node, size_t depth, LongestPath *best);
-static int make_longest_paths(const Ledger *ledger, const char *input,
-                              const Lattice *lat, LongestPathList *list);
-static void show_longest_paths(const char *input, const LongestPathList *list);
-static void show_reach(const LongestPathList *list);
-static void show_occurrence_adjacencies(const Ledger *ledger,
-                                         const char *input,
-                                         const Lattice *lat);
-static void show_observed_paths(const Ledger *ledger, const char *input,
-                                const Lattice *lat);
-static void free_sui_input(SuiInput *input);
-static int parse_sui_input(const char *line, const MkledgerConfig *config,
-                           SuiInput *input);
-static void print_input_provenance(FILE *fp, const SuiInput *input);
-static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
-                           const SuiInput *input, size_t start, size_t end);
-static char *parse_candy_text(const char *line);
-static int index_candy_surfaces(Ledger *ledger, const MkledgerConfig *config);
-static int scan_candy_surface(const Ledger *ledger,
-                              const MkledgerConfig *config,
-                              const char *input, size_t start,
-                              size_t *matched_end, uint32_t *matched_surface);
-static int process_input(const Ledger *ledger, const MkledgerConfig *config,
-                         int monitor, int unresolved, int append_candy);
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b) {
