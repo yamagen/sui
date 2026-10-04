@@ -1038,6 +1038,28 @@ static int process_input(const Ledger *ledger, int monitor) {
   return 0;
 }
 
+static int monitor_ledger(const Ledger *ledger) {
+  uint32_t nprovenance;
+
+  printf("version:         %u\n", ledger->header->version);
+  printf("trie nodes:      %u\n", ledger->header->trie_nodes);
+  printf("unique surfaces: %u\n", ledger->header->unique_surfaces);
+  printf("combines:        %u\n", ledger->combine->ncombines);
+
+  if (count_ledger_provenance(ledger, &nprovenance) != 0) {
+    fprintf(stderr, "invalid combine records\n");
+    return -1;
+  }
+
+  printf("provenance:      %u\n", nprovenance);
+  printf("root token:      %u\n", ledger->trie[0].token);
+  printf("root child:      %u\n", ledger->trie[0].child);
+  printf("root sibling:    %u\n", ledger->trie[0].sibling);
+  printf("root freq:       %u\n", ledger->trie[0].freq);
+
+  return 0;
+}
+
 int main(int argc, char *argv[]) {
   Ledger ledger;
   const char *path;
@@ -1068,25 +1090,9 @@ int main(int argc, char *argv[]) {
   if (load_ledger(path, &ledger) != 0)
     return EXIT_FAILURE;
 
-  if (monitor) {
-    uint32_t nprovenance;
-
-    printf("version:         %u\n", ledger.header->version);
-    printf("trie nodes:      %u\n", ledger.header->trie_nodes);
-    printf("unique surfaces: %u\n", ledger.header->unique_surfaces);
-    printf("combines:        %u\n", ledger.combine->ncombines);
-
-    if (count_ledger_provenance(&ledger, &nprovenance) != 0) {
-      fprintf(stderr, "invalid combine records\n");
-      unload_ledger(&ledger);
-      return EXIT_FAILURE;
-    }
-
-    printf("provenance:      %u\n", nprovenance);
-    printf("root token:      %u\n", ledger.trie[0].token);
-    printf("root child:      %u\n", ledger.trie[0].child);
-    printf("root sibling:    %u\n", ledger.trie[0].sibling);
-    printf("root freq:       %u\n", ledger.trie[0].freq);
+  if (monitor && monitor_ledger(&ledger) != 0) {
+    unload_ledger(&ledger);
+    return EXIT_FAILURE;
   }
 
   if (process_input(&ledger, monitor) != 0) {
