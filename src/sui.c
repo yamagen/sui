@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "config.h"
 #include "ledger.h"
 
 typedef struct {
@@ -1372,13 +1373,18 @@ static int monitor_ledger(const Ledger *ledger) {
 
 int main(int argc, char *argv[]) {
   Ledger ledger;
+  MkledgerConfig config;
+  const char *config_path = "ledger-config.json";
   const char *path;
   int monitor = 0;
   int unresolved = 0;
   int opt;
 
-  while ((opt = getopt(argc, argv, "muh")) != -1) {
+  while ((opt = getopt(argc, argv, "c:muh")) != -1) {
     switch (opt) {
+    case 'c':
+      config_path = optarg;
+      break;
     case 'm':
       monitor = 1;
       break;
@@ -1386,39 +1392,47 @@ int main(int argc, char *argv[]) {
       unresolved = 1;
       break;
     case 'h':
-      printf("usage: %s [-m | -u] ledger.dat\n", argv[0]);
+      printf("usage: %s [-c config] [-m | -u] ledger.dat\n", argv[0]);
       return EXIT_SUCCESS;
     default:
-      fprintf(stderr, "usage: %s [-m | -u] ledger.dat\n", argv[0]);
+      fprintf(stderr, "usage: %s [-c config] [-m | -u] ledger.dat\n", argv[0]);
       return EXIT_FAILURE;
     }
   }
 
   if (monitor && unresolved) {
-    fprintf(stderr, "usage: %s [-m | -u] ledger.dat\n", argv[0]);
+    fprintf(stderr, "usage: %s [-c config] [-m | -u] ledger.dat\n", argv[0]);
     return EXIT_FAILURE;
   }
 
   if (optind + 1 != argc) {
-    fprintf(stderr, "usage: %s [-m | -u] ledger.dat\n", argv[0]);
+    fprintf(stderr, "usage: %s [-c config] [-m | -u] ledger.dat\n", argv[0]);
     return EXIT_FAILURE;
   }
 
   path = argv[optind];
 
-  if (load_ledger(path, &ledger) != 0)
+  if (load_mkledger_config(config_path, &config) != 0)
     return EXIT_FAILURE;
+
+  if (load_ledger(path, &ledger) != 0) {
+    free_mkledger_config(&config);
+    return EXIT_FAILURE;
+  }
 
   if (monitor && monitor_ledger(&ledger) != 0) {
     unload_ledger(&ledger);
+    free_mkledger_config(&config);
     return EXIT_FAILURE;
   }
 
   if (process_input(&ledger, monitor, unresolved) != 0) {
     unload_ledger(&ledger);
+    free_mkledger_config(&config);
     return EXIT_FAILURE;
   }
 
   unload_ledger(&ledger);
+  free_mkledger_config(&config);
   return EXIT_SUCCESS;
 }
