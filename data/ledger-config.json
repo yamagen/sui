@@ -1,0 +1,27 @@
+{
+  "version": "1.0",
+  "filename": "ledger-config.json",
+  "ledger": {
+    "sequence": "id",
+    "trie": "word",
+    "ignore": ["、", "。"]
+  },
+  "schema": {
+    "corpus": "string",
+    "id": ["integer", "string"],
+    "token": "integer",
+    "word": "string",
+    "lemma": "string",
+    "kana": "string",
+    "lemma-kana": "string",
+    "romaji": "string",
+    "lemma-romaji": "string",
+    "gloss": "string",
+    "pos": "string",
+    "ku": "integer"
+  },
+  "provenance": ["corpus", "id", "token"],
+  "candy": {
+    "filename": "ledger-candy.jsonl"
+  }
+}
