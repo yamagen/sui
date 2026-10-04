@@ -115,7 +115,7 @@ reused=$(printf '%s\n' '男につきて何か' |
 [ -z "$reused" ] ||
   fail "candy surface reuse"
 
-cat > "$candy_file" <<'EOF'
+cat > "$candy" <<'EOF'
 !{"start":6,"end":21,"text":"竹の中に、","word":"","lemma":"","kana":"","lemma-kana":"","romaji":"","lemma-romaji":"","gloss":"","pos":""}
 EOF
 
