@@ -37,7 +37,6 @@ typedef struct {
   const OccurrenceRecord *occurrencev;
   uint32_t null_surface;
   uint32_t current_max_surface;
-  char **runtime_surface_strings;
   size_t *runtime_surface_offsets;
   size_t runtime_surface_count;
   size_t runtime_surface_cap;
@@ -124,7 +123,7 @@ static int find_lattice_gaps(const char *input, const Lattice *lat,
 static int show_lattice_gaps(const char *input, const Lattice *lat);
 static void unload_ledger(Ledger *ledger);
 static const char *surface_string(const Ledger *ledger, uint32_t surface);
-static const char *runtime_surface_string(const Ledger *ledger,
+static char *runtime_surface_string(const Ledger *ledger,
                                           uint32_t surface);
 static int load_ledger(const char *path, Ledger *ledger);
 static int make_lattice(const Ledger *ledger, const char *input, Lattice *lat);
@@ -208,8 +207,7 @@ static int append_uncovered_adjacencies(const Ledger *ledger,
   const LatticeEdge *b;
   const LatticeEdge *best_a = NULL;
   const LatticeEdge *best_b = NULL;
-  const char *best_as = NULL;
-  const char *best_bs = NULL;
+
   FILE *fp;
 
   if (config == NULL || config->candy.filename == NULL)
@@ -238,26 +236,59 @@ static int append_uncovered_adjacencies(const Ledger *ledger,
       if (best_a == NULL || a->end - a->start > best_a->end - best_a->start) {
         best_a = a;
         best_b = b;
-        best_as = as;
-        best_bs = bs;
       }
+
+      if (a->surface > ledger->null_surface)
+        free((char *)as);
+      if (b->surface > ledger->null_surface)
+        free((char *)bs);
     }
   }
 
   if (best_a == NULL)
     return 0;
 
-  fp = fopen(config->candy.filename, "a");
-  if (fp == NULL)
-    return -1;
+  const char *best_as =
+      best_a->surface > ledger->null_surface
+          ? runtime_surface_string(ledger, best_a->surface)
+          : surface_string(ledger, best_a->surface);
+  const char *best_bs =
+      best_b->surface > ledger->null_surface
+          ? runtime_surface_string(ledger, best_b->surface)
+          : surface_string(ledger, best_b->surface);
 
-  if (emit_adjacency_work_row(fp, config, input, best_a, best_as) != 0 ||
-      emit_adjacency_work_row(fp, config, input, best_b, best_bs) != 0) {
-    fclose(fp);
+  if (best_as == NULL || best_bs == NULL) {
+    if (best_a->surface > ledger->null_surface)
+      free((char *)best_as);
+    if (best_b->surface > ledger->null_surface)
+      free((char *)best_bs);
     return -1;
   }
 
-  return fclose(fp) == 0 ? 1 : -1;
+  fp = fopen(config->candy.filename, "a");
+  if (fp == NULL) {
+    if (best_a->surface > ledger->null_surface)
+      free((char *)best_as);
+    if (best_b->surface > ledger->null_surface)
+      free((char *)best_bs);
+    return -1;
+  }
+
+  int status =
+      emit_adjacency_work_row(fp, config, input, best_a, best_as) != 0 ||
+      emit_adjacency_work_row(fp, config, input, best_b, best_bs) != 0
+          ? -1
+          : 1;
+
+  if (fclose(fp) != 0)
+    status = -1;
+
+  if (best_a->surface > ledger->null_surface)
+    free((char *)best_as);
+  if (best_b->surface > ledger->null_surface)
+    free((char *)best_bs);
+
+  return status;
 }
 
 static bool reach_covers_adjacency(const LongestPathList *list,
@@ -349,6 +380,11 @@ static void show_uncovered_adjacencies(const Ledger *ledger,
 
       print_adjacency_work_row(config, as);
       print_adjacency_work_row(config, bs);
+
+      if (a->surface > ledger->null_surface)
+        free((char *)as);
+      if (b->surface > ledger->null_surface)
+        free((char *)bs);
     }
   }
 }
@@ -1052,27 +1088,45 @@ static const char *surface_string(const Ledger *ledger, uint32_t surface) {
   return ledger->surface_strings + ledger->surface_offset[surface];
 }
 
-static const char *runtime_surface_string(const Ledger *ledger,
-                                          uint32_t surface) {
+static char *runtime_surface_string(const Ledger *ledger,
+                                    uint32_t surface) {
   size_t index;
+  size_t offset;
+  const char *line;
+  const char *nl;
+  size_t line_len;
+  char *copy;
+  char *text;
 
   if (surface <= ledger->null_surface ||
       surface > ledger->current_max_surface)
     return NULL;
 
   index = (size_t)(surface - ledger->null_surface - 1);
-  if (index >= ledger->runtime_surface_count)
+  if (index >= ledger->runtime_surface_count || ledger->candy_map == NULL)
     return NULL;
 
-  return ledger->runtime_surface_strings[index];
+  offset = ledger->runtime_surface_offsets[index];
+  if (offset >= ledger->candy_size)
+    return NULL;
+
+  line = (const char *)ledger->candy_map + offset;
+  nl = memchr(line, '\n', ledger->candy_size - offset);
+  line_len = nl == NULL ? ledger->candy_size - offset : (size_t)(nl - line);
+
+  if (line_len != 0 && line[line_len - 1] == '\r')
+    line_len--;
+
+  copy = strndup(line, line_len);
+  if (copy == NULL)
+    return NULL;
+
+  text = parse_candy_text(copy);
+  free(copy);
+  return text;
 }
 
 static void unload_ledger(Ledger *ledger) {
-  size_t i;
-
-  for (i = 0; i < ledger->runtime_surface_count; i++)
-    free(ledger->runtime_surface_strings[i]);
-  free(ledger->runtime_surface_strings);
   free(ledger->runtime_surface_offsets);
 
   if (ledger->candy_map != NULL)
@@ -1130,7 +1184,6 @@ static int load_ledger(const char *path, Ledger *ledger) {
 
   ledger->null_surface = ledger->header->unique_surfaces + 2;
   ledger->current_max_surface = ledger->null_surface;
-  ledger->runtime_surface_strings = NULL;
   ledger->runtime_surface_offsets = NULL;
   ledger->runtime_surface_count = 0;
   ledger->runtime_surface_cap = 0;
@@ -1190,9 +1243,12 @@ static int make_lattice(const Ledger *ledger, const char *input, Lattice *lat) {
       len = strlen(surface);
       if (start + len <= input_len &&
           memcmp(input + start, surface, len) == 0) {
-        if (lattice_add(lat, start, start + len, id) != 0)
+        if (lattice_add(lat, start, start + len, id) != 0) {
+          free((char *)surface);
           return -1;
+        }
       }
+      free((char *)surface);
     }
   }
 
@@ -1917,60 +1973,92 @@ static char *parse_candy_text(const char *line) {
 
 static int index_candy_surfaces(Ledger *ledger,
                                 const MkledgerConfig *config) {
-  FILE *fp;
-  char line[4096];
+  int fd;
+  struct stat st;
+  const char *base;
+  size_t offset = 0;
   uint32_t surface = ledger->null_surface;
 
   if (config == NULL || config->candy.filename == NULL)
     return 0;
 
-  fp = fopen(config->candy.filename, "r");
-  if (fp == NULL)
+  fd = open(config->candy.filename, O_RDONLY);
+  if (fd < 0)
     return 0;
 
-  while (fgets(line, sizeof line, fp) != NULL) {
-    char *text;
-
-    line[strcspn(line, "\r\n")] = '\0';
-    text = parse_candy_text(line);
-    if (text == NULL)
-      continue;
-
-    if (surface == UINT32_MAX) {
-      free(text);
-      fclose(fp);
-      return -1;
-    }
-
-    if (ledger->runtime_surface_count == ledger->runtime_surface_cap) {
-      size_t new_cap =
-          ledger->runtime_surface_cap == 0 ? 16 : ledger->runtime_surface_cap * 2;
-      char **new_strings =
-          realloc(ledger->runtime_surface_strings, new_cap * sizeof(*new_strings));
-
-      if (new_strings == NULL) {
-        free(text);
-        fclose(fp);
-        return -1;
-      }
-
-      ledger->runtime_surface_strings = new_strings;
-      ledger->runtime_surface_cap = new_cap;
-    }
-
-    ledger->runtime_surface_strings[ledger->runtime_surface_count++] = text;
-    surface++;
+  if (fstat(fd, &st) != 0) {
+    close(fd);
+    return -1;
   }
 
-  if (fclose(fp) != 0)
+  ledger->candy_size = (size_t)st.st_size;
+  if (ledger->candy_size == 0) {
+    close(fd);
+    return 0;
+  }
+
+  ledger->candy_map =
+      mmap(NULL, ledger->candy_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  close(fd);
+
+  if (ledger->candy_map == MAP_FAILED) {
+    ledger->candy_map = NULL;
+    ledger->candy_size = 0;
     return -1;
+  }
+
+  base = (const char *)ledger->candy_map;
+
+  while (offset < ledger->candy_size) {
+    const char *line = base + offset;
+    const char *nl = memchr(line, '\n', ledger->candy_size - offset);
+    size_t line_len = nl == NULL ? ledger->candy_size - offset
+                                 : (size_t)(nl - line);
+    char *copy;
+    char *text;
+
+    if (line_len != 0 && line[line_len - 1] == '\r')
+      line_len--;
+
+    copy = strndup(line, line_len);
+    if (copy == NULL)
+      return -1;
+
+    text = parse_candy_text(copy);
+    free(copy);
+
+    if (text != NULL) {
+      size_t *new_offsets;
+
+      free(text);
+
+      if (surface == UINT32_MAX)
+        return -1;
+
+      if (ledger->runtime_surface_count == ledger->runtime_surface_cap) {
+        size_t new_cap = ledger->runtime_surface_cap == 0
+                             ? 16
+                             : ledger->runtime_surface_cap * 2;
+
+        new_offsets = realloc(ledger->runtime_surface_offsets,
+                              new_cap * sizeof(*new_offsets));
+        if (new_offsets == NULL)
+          return -1;
+
+        ledger->runtime_surface_offsets = new_offsets;
+        ledger->runtime_surface_cap = new_cap;
+      }
+
+      ledger->runtime_surface_offsets[ledger->runtime_surface_count++] = offset;
+      surface++;
+    }
+
+    if (nl == NULL)
+      break;
+    offset = (size_t)(nl - base) + 1;
+  }
 
   ledger->current_max_surface = surface;
-
-  if (ledger->runtime_surface_count != 0 &&
-      runtime_surface_string(ledger, ledger->current_max_surface) == NULL)
-    return -1;
-
   return 0;
 }
 
@@ -2178,6 +2266,9 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       continue;
 
     printf("%zu\t%zu\t%u\t%s\n", e->start, e->end, e->surface, surface);
+
+    if (e->surface > ledger->null_surface)
+      free((char *)surface);
 
     if (e->surface < ledger->header->unique_surfaces &&
         show_surface_combines(ledger, e->surface) != 0) {
