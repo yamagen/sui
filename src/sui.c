@@ -2169,6 +2169,29 @@ next_line:
   return 0;
 }
 
+static size_t ignored_advance(const MkledgerConfig *config,
+                              const char *input, size_t target_end) {
+  size_t i;
+  size_t best_end = target_end;
+
+  if (config == NULL)
+    return target_end;
+
+  for (i = 0; i < config->ledger.nignore; i++) {
+    const char *ignored = config->ledger.ignore[i];
+    size_t len = strlen(ignored);
+
+    if (len == 0)
+      continue;
+
+    if (strncmp(input + target_end, ignored, len) == 0 &&
+        target_end + len > best_end)
+      best_end = target_end + len;
+  }
+
+  return best_end;
+}
+
 static size_t candy_approved_advance(const Ledger *ledger,
                                      const char *input, size_t target_end) {
   const char *base;
@@ -2273,14 +2296,21 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       size_t previous_end = target_end;
       size_t candy_end = candy_approved_advance(ledger, input, target_end);
 
-      if (candy_end <= target_end)
-        break;
+      if (candy_end > target_end) {
+        target_end = candy_end;
 
-      target_end = candy_end;
+        for (path = paths.v; path < paths.v + paths.n; path++)
+          if (path->start == target_end && path->end > target_end)
+            target_end = path->end;
+      }
 
-      for (path = paths.v; path < paths.v + paths.n; path++)
-        if (path->start == target_end && path->end > target_end)
-          target_end = path->end;
+      for (;;) {
+        size_t ignored_end = ignored_advance(config, input, target_end);
+
+        if (ignored_end <= target_end)
+          break;
+        target_end = ignored_end;
+      }
 
       if (target_end <= previous_end)
         break;
