@@ -833,7 +833,8 @@ static int emit_runtime_record(const Ledger *ledger,
 
     if (strcmp(key, "start") != 0 && strcmp(key, "end") != 0 &&
         strcmp(key, "text") != 0) {
-      putchar(',');
+      if (!first_field)
+        putchar(',');
       print_json_string_to(stdout, key);
       putchar(':');
       if (fwrite(copy + value_start, 1, value_end - value_start, stdout) !=
@@ -842,6 +843,7 @@ static int emit_runtime_record(const Ledger *ledger,
         free(copy);
         return -1;
       }
+      first_field = 0;
     }
 
     free(key);
