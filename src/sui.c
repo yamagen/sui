@@ -2269,7 +2269,13 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       if (path->start == 0 && path->end > target_end)
         target_end = path->end;
 
-    target_end = candy_approved_advance(ledger, input, target_end);
+    for (;;) {
+      size_t candy_end = candy_approved_advance(ledger, input, target_end);
+
+      if (candy_end <= target_end)
+        break;
+      target_end = candy_end;
+    }
 
     int appended_adjacency = 0;
 
