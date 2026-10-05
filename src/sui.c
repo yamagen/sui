@@ -202,6 +202,10 @@ static int ledger_run_matches(const Ledger *ledger,
                               const RouteRun *run,
                               const OccurrenceRecord *first);
 static size_t runtime_surface_offset(const Ledger *ledger, uint32_t surface);
+static int selected_route_has_runtime(const Ledger *ledger,
+                                      const SelectedRoute *route);
+static int emit_mixed_route(const Ledger *ledger,
+                            const SelectedRoute *route, size_t target_end);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -758,6 +762,140 @@ static size_t runtime_surface_offset(const Ledger *ledger, uint32_t surface) {
     return SIZE_MAX;
 
   return ledger->runtime_surface_offsets[index];
+}
+
+
+static int selected_route_has_runtime(const Ledger *ledger,
+                                      const SelectedRoute *route) {
+  size_t i;
+
+  for (i = 0; i < route->n; i++)
+    if (route->v[i].surface > ledger->null_surface)
+      return 1;
+
+  return 0;
+}
+
+static int emit_runtime_record(const Ledger *ledger, uint32_t surface) {
+  size_t offset = runtime_surface_offset(ledger, surface);
+  const char *line;
+  const char *nl;
+  size_t line_len;
+
+  if (offset == SIZE_MAX || offset >= ledger->candy_size ||
+      ledger->candy_map == NULL)
+    return -1;
+
+  line = (const char *)ledger->candy_map + offset;
+  nl = memchr(line, '\n', ledger->candy_size - offset);
+  line_len = nl == NULL ? ledger->candy_size - offset : (size_t)(nl - line);
+
+  if (line_len != 0 && line[line_len - 1] == '\r')
+    line_len--;
+
+  if (line_len == 0 || line[0] == '!')
+    return -1;
+
+  return fwrite(line, 1, line_len, stdout) == line_len ? 0 : -1;
+}
+
+static int emit_mixed_route_from(const Ledger *ledger,
+                                 const SelectedRoute *route,
+                                 const RouteRunList *runs, size_t run_index,
+                                 const OccurrenceRecord **ledger_first,
+                                 size_t target_end) {
+  const RouteRun *run;
+
+  if (run_index == runs->n) {
+    size_t r;
+    int first_record = 1;
+
+    printf("{\"start\":0,\"end\":%zu,\"records\":[", target_end);
+
+    for (r = 0; r < runs->n; r++) {
+      const RouteRun *out_run = &runs->v[r];
+      const LatticeEdge *first_edge = &route->v[out_run->first];
+      size_t j;
+
+      if (first_edge->surface > ledger->null_surface) {
+        for (j = 0; j < out_run->count; j++) {
+          if (!first_record)
+            putchar(',');
+          if (emit_runtime_record(
+                  ledger, route->v[out_run->first + j].surface) != 0)
+            return -1;
+          first_record = 0;
+        }
+      } else {
+        for (j = 0; j < out_run->count; j++) {
+          if (!first_record)
+            putchar(',');
+          if (emit_occurrence(ledger, ledger_first[r] + j) != 0)
+            return -1;
+          first_record = 0;
+        }
+      }
+    }
+
+    fputs("]}\n", stdout);
+    return 0;
+  }
+
+  run = &runs->v[run_index];
+
+  if (route->v[run->first].surface > ledger->null_surface)
+    return emit_mixed_route_from(ledger, route, runs, run_index + 1,
+                                 ledger_first, target_end);
+
+  {
+    const OccurrenceRecord *occurrence;
+    const OccurrenceRecord *end =
+        ledger->occurrencev + ledger->occurrence->noccurrences;
+
+    for (occurrence = ledger->occurrencev; occurrence < end; occurrence++) {
+      if (!ledger_run_matches(ledger, route, run, occurrence))
+        continue;
+
+      ledger_first[run_index] = occurrence;
+      if (emit_mixed_route_from(ledger, route, runs, run_index + 1,
+                                ledger_first, target_end) != 0)
+        return -1;
+    }
+  }
+
+  return 0;
+}
+
+static int emit_mixed_route(const Ledger *ledger,
+                            const SelectedRoute *route, size_t target_end) {
+  RouteRunList runs;
+  const OccurrenceRecord **ledger_first;
+  int status;
+
+  route_run_list_init(&runs);
+
+  if (split_selected_route(ledger, route, &runs) != 0) {
+    route_run_list_free(&runs);
+    return -1;
+  }
+
+  if (runs.n == 0) {
+    route_run_list_free(&runs);
+    return 0;
+  }
+
+  ledger_first = calloc(runs.n, sizeof *ledger_first);
+  if (ledger_first == NULL) {
+    route_run_list_free(&runs);
+    return -1;
+  }
+
+  status = emit_mixed_route_from(ledger, route, &runs, 0, ledger_first,
+                                 target_end);
+
+  free(ledger_first);
+  route_run_list_free(&runs);
+  return status;
 }
 
 static int longest_path_set_route(LongestPath *path,
@@ -2776,11 +2914,21 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           }
         }
       }
-    } else if (emit_observed_paths(ledger, input, &lat, target_end) != 0) {
-      longest_path_list_free(&paths);
-      lattice_free(&lat);
-      free_sui_input(&parsed);
-      return -1;
+    } else {
+      int emit_status;
+
+      if (selected_route_has_runtime(ledger, &accepted))
+        emit_status = emit_mixed_route(ledger, &accepted, target_end);
+      else
+        emit_status = emit_observed_paths(ledger, input, &lat, target_end);
+
+      if (emit_status != 0) {
+        selected_route_free(&accepted);
+        longest_path_list_free(&paths);
+        lattice_free(&lat);
+        free_sui_input(&parsed);
+        return -1;
+      }
     }
 
     selected_route_free(&accepted);
