@@ -206,6 +206,8 @@ static int selected_route_has_runtime(const Ledger *ledger,
                                       const SelectedRoute *route);
 static int emit_mixed_route(const Ledger *ledger,
                             const SelectedRoute *route, size_t target_end);
+static int emit_occurrence(const Ledger *ledger,
+                           const OccurrenceRecord *occurrence);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
