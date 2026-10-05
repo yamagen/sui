@@ -1297,24 +1297,6 @@ static int make_lattice(const Ledger *ledger, const char *input, Lattice *lat) {
       }
     }
 
-    for (id = ledger->null_surface + 1;
-         id <= ledger->current_max_surface; id++) {
-      const char *surface = runtime_surface_string(ledger, id);
-      size_t len;
-
-      if (surface == NULL)
-        continue;
-
-      len = strlen(surface);
-      if (start + len <= input_len &&
-          memcmp(input + start, surface, len) == 0) {
-        if (lattice_add(lat, start, start + len, id) != 0) {
-          free((char *)surface);
-          return -1;
-        }
-      }
-      free((char *)surface);
-    }
   }
 
   return 0;
@@ -2130,6 +2112,64 @@ next_line:
   return 0;
 }
 
+static size_t candy_approved_advance(const Ledger *ledger,
+                                     const char *input, size_t target_end) {
+  const char *base;
+  size_t offset = 0;
+  char *previous = NULL;
+
+  if (ledger->candy_map == NULL || ledger->candy_size == 0)
+    return target_end;
+
+  base = (const char *)ledger->candy_map;
+
+  while (offset < ledger->candy_size) {
+    const char *line = base + offset;
+    const char *nl = memchr(line, '\n', ledger->candy_size - offset);
+    size_t line_len = nl == NULL ? ledger->candy_size - offset
+                                 : (size_t)(nl - line);
+    char *copy;
+    char *text = NULL;
+
+    if (line_len != 0 && line[line_len - 1] == '\r')
+      line_len--;
+
+    copy = strndup(line, line_len);
+    if (copy == NULL) {
+      free(previous);
+      return target_end;
+    }
+
+    if (copy[0] != '!')
+      text = parse_candy_text(copy);
+    free(copy);
+
+    if (text != NULL && previous != NULL) {
+      size_t previous_len = strlen(previous);
+      size_t text_len = strlen(text);
+
+      if (previous_len <= target_end &&
+          memcmp(input + target_end - previous_len, previous,
+                 previous_len) == 0 &&
+          memcmp(input + target_end, text, text_len) == 0) {
+        free(previous);
+        free(text);
+        return target_end + text_len;
+      }
+    }
+
+    free(previous);
+    previous = text;
+
+    if (nl == NULL)
+      break;
+    offset = (size_t)(nl - base) + 1;
+  }
+
+  free(previous);
+  return target_end;
+}
+
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy) {
   char line[4096];
@@ -2171,6 +2211,8 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
     for (path = paths.v; path < paths.v + paths.n; path++)
       if (path->start == 0 && path->end > target_end)
         target_end = path->end;
+
+    target_end = candy_approved_advance(ledger, input, target_end);
 
     int appended_adjacency = 0;
 
