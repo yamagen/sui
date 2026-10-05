@@ -1966,6 +1966,59 @@ static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
   return ferror(fp) ? -1 : 0;
 }
 
+static int candy_has_unresolved(const Ledger *ledger,
+                                const MkledgerConfig *config,
+                                const SuiInput *input, size_t start,
+                                size_t end) {
+  char *expected = NULL;
+  size_t expected_len = 0;
+  FILE *fp;
+  const char *base;
+  size_t offset = 0;
+  int found = 0;
+
+  fp = open_memstream(&expected, &expected_len);
+  if (fp == NULL)
+    return 0;
+
+  if (emit_unresolved(fp, config, input, start, end) != 0 ||
+      fclose(fp) != 0) {
+    free(expected);
+    return 0;
+  }
+
+  if (ledger->candy_map == NULL || ledger->candy_size == 0) {
+    free(expected);
+    return 0;
+  }
+
+  base = (const char *)ledger->candy_map;
+
+  while (offset < ledger->candy_size) {
+    const char *line = base + offset;
+    const char *nl = memchr(line, '\n', ledger->candy_size - offset);
+    size_t line_len = nl == NULL ? ledger->candy_size - offset
+                                 : (size_t)(nl - line);
+
+    if (line_len != 0 && line[line_len - 1] == '\r')
+      line_len--;
+
+    if (expected_len != 0 && expected[expected_len - 1] == '\n' &&
+        line_len == expected_len - 1 &&
+        memcmp(line, expected, line_len) == 0) {
+      found = 1;
+      break;
+    }
+
+    if (nl == NULL)
+      break;
+    offset = (size_t)(nl - base) + 1;
+  }
+
+  free(expected);
+  return found;
+}
+
 static char *parse_candy_text(const char *line) {
   tjson_t json;
   char *text = NULL;
@@ -2243,7 +2296,9 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           return -1;
         }
 
-        if (append_candy && !appended_adjacency) {
+        if (append_candy && !appended_adjacency &&
+            !candy_has_unresolved(ledger, config, &parsed, target_end,
+                                  input_end)) {
           FILE *fp = fopen(config->candy.filename, "a");
           int status;
 
