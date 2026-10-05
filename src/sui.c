@@ -155,10 +155,6 @@ static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
 static char *parse_candy_text(const char *line);
 static int index_candy_surfaces(Ledger *ledger,
                                 const MkledgerConfig *config);
-static int scan_candy_surface(const Ledger *ledger,
-                              const MkledgerConfig *config,
-                              const char *input, size_t start,
-                              size_t *matched_end, uint32_t *matched_surface);
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy);
 
@@ -2065,58 +2061,6 @@ next_line:
   return 0;
 }
 
-static int scan_candy_surface(const Ledger *ledger,
-                              const MkledgerConfig *config,
-                              const char *input, size_t start,
-                              size_t *matched_end, uint32_t *matched_surface) {
-  FILE *fp;
-  char line[4096];
-  size_t input_end = strlen(input);
-  uint32_t surface = ledger->null_surface;
-  int found = 0;
-
-  *matched_end = start;
-  *matched_surface = ledger->null_surface;
-
-  if (config == NULL || config->candy.filename == NULL)
-    return 0;
-
-  fp = fopen(config->candy.filename, "r");
-  if (fp == NULL)
-    return 0;
-
-  while (fgets(line, sizeof line, fp) != NULL) {
-    char *text;
-    size_t len;
-
-    line[strcspn(line, "\r\n")] = '\0';
-    if (line[0] == '!')
-      continue;
-
-    text = parse_candy_text(line);
-    if (text == NULL)
-      continue;
-
-    surface++;
-    len = strlen(text);
-
-    if (len != 0 && start + len <= input_end &&
-        memcmp(input + start, text, len) == 0 &&
-        start + len > *matched_end) {
-      *matched_end = start + len;
-      *matched_surface = surface;
-      found = 1;
-    }
-
-    free(text);
-  }
-
-  if (fclose(fp) != 0)
-    return -1;
-
-  return found;
-}
-
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy) {
   char line[4096];
@@ -2158,38 +2102,6 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
     for (path = paths.v; path < paths.v + paths.n; path++)
       if (path->start == 0 && path->end > target_end)
         target_end = path->end;
-
-    if (config != NULL && config->candy.filename != NULL) {
-      size_t input_end = strlen(input);
-
-      while (target_end < input_end) {
-        size_t candy_end;
-        size_t known_end;
-        uint32_t candy_surface;
-        int candy_status = scan_candy_surface(
-            ledger, config, input, target_end, &candy_end, &candy_surface);
-
-        if (candy_status < 0) {
-          longest_path_list_free(&paths);
-          lattice_free(&lat);
-          free_sui_input(&parsed);
-          return -1;
-        }
-
-        if (candy_status == 0)
-          break;
-
-        (void)candy_surface;
-        target_end = candy_end;
-        known_end = target_end;
-
-        for (path = paths.v; path < paths.v + paths.n; path++)
-          if (path->start == target_end && path->end > known_end)
-            known_end = path->end;
-
-        target_end = known_end;
-      }
-    }
 
     int appended_adjacency = 0;
 
