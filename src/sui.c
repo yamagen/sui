@@ -197,6 +197,11 @@ static void route_run_list_free(RouteRunList *runs);
 static int split_selected_route(const Ledger *ledger,
                                 const SelectedRoute *route,
                                 RouteRunList *runs);
+static int ledger_run_matches(const Ledger *ledger,
+                              const SelectedRoute *route,
+                              const RouteRun *run,
+                              const OccurrenceRecord *first);
+static size_t runtime_surface_offset(const Ledger *ledger, uint32_t surface);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -714,6 +719,45 @@ static int split_selected_route(const Ledger *ledger,
   }
 
   return 0;
+}
+
+static int ledger_run_matches(const Ledger *ledger,
+                              const SelectedRoute *route,
+                              const RouteRun *run,
+                              const OccurrenceRecord *first) {
+  const OccurrenceRecord *end =
+      ledger->occurrencev + ledger->occurrence->noccurrences;
+  size_t i;
+
+  if (run->count == 0 || first < ledger->occurrencev || first >= end)
+    return 0;
+
+  for (i = 0; i < run->count; i++) {
+    const OccurrenceRecord *occurrence = first + i;
+    const LatticeEdge *edge = &route->v[run->first + i];
+
+    if (occurrence >= end)
+      return 0;
+    if (i != 0 && occurrence->sequence != first->sequence)
+      return 0;
+    if (occurrence->surface != edge->surface)
+      return 0;
+  }
+
+  return 1;
+}
+
+static size_t runtime_surface_offset(const Ledger *ledger, uint32_t surface) {
+  size_t index;
+
+  if (surface <= ledger->null_surface || surface > ledger->current_max_surface)
+    return SIZE_MAX;
+
+  index = (size_t)(surface - ledger->null_surface - 1);
+  if (index >= ledger->runtime_surface_count)
+    return SIZE_MAX;
+
+  return ledger->runtime_surface_offsets[index];
 }
 
 static int longest_path_set_route(LongestPath *path,
@@ -2639,6 +2683,46 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
         free_sui_input(&parsed);
         return -1;
       }
+
+      for (size_t r = 0; r < runs.n; r++) {
+        const RouteRun *run = &runs.v[r];
+        const LatticeEdge *first_edge = &accepted.v[run->first];
+
+        if (first_edge->surface > ledger->null_surface) {
+          for (size_t j = 0; j < run->count; j++)
+            if (runtime_surface_offset(
+                    ledger, accepted.v[run->first + j].surface) == SIZE_MAX) {
+              route_run_list_free(&runs);
+              selected_route_free(&accepted);
+              longest_path_list_free(&paths);
+              lattice_free(&lat);
+              free_sui_input(&parsed);
+              return -1;
+            }
+        } else {
+          const OccurrenceRecord *occurrence;
+          const OccurrenceRecord *end =
+              ledger->occurrencev + ledger->occurrence->noccurrences;
+          int matched = 0;
+
+          for (occurrence = ledger->occurrencev; occurrence < end;
+               occurrence++)
+            if (ledger_run_matches(ledger, &accepted, run, occurrence)) {
+              matched = 1;
+              break;
+            }
+
+          if (!matched) {
+            route_run_list_free(&runs);
+            selected_route_free(&accepted);
+            longest_path_list_free(&paths);
+            lattice_free(&lat);
+            free_sui_input(&parsed);
+            return -1;
+          }
+        }
+      }
+
       route_run_list_free(&runs);
     }
 
