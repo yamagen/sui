@@ -3149,15 +3149,19 @@ int main(int argc, char *argv[]) {
   int monitor = 0;
   int unresolved = 0;
   int append_candy = 0;
+  int best = 0;
   int opt;
 
   memset(&config, 0, sizeof(config));
 
-  while ((opt = getopt(argc, argv, "ac:muh")) != -1) {
+  while ((opt = getopt(argc, argv, "abc:muh")) != -1) {
     switch (opt) {
     case 'a':
       append_candy = 1;
       unresolved = 1;
+      break;
+    case 'b':
+      best = 1;
       break;
     case 'c':
       config_path = optarg;
@@ -3169,21 +3173,21 @@ int main(int argc, char *argv[]) {
       unresolved = 1;
       break;
     case 'h':
-      printf("usage: %s [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
+      printf("usage: %s [-b] [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
       return EXIT_SUCCESS;
     default:
-      fprintf(stderr, "usage: %s [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
+      fprintf(stderr, "usage: %s [-b] [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
       return EXIT_FAILURE;
     }
   }
 
   if (monitor && unresolved) {
-    fprintf(stderr, "usage: %s [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
+    fprintf(stderr, "usage: %s [-b] [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
     return EXIT_FAILURE;
   }
 
   if (optind + 1 != argc) {
-    fprintf(stderr, "usage: %s [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
+    fprintf(stderr, "usage: %s [-b] [-c config] [-m | -u | -a] ledger.dat\n", argv[0]);
     return EXIT_FAILURE;
   }
 
