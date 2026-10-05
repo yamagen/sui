@@ -1735,7 +1735,7 @@ static int find_longest_from(const Ledger *ledger, const char *input,
   if (selected_route_add(route, edge->start, edge->end, edge->surface) != 0)
     return -1;
 
-  if (edge->end > best->end ||
+  if (best->route_n == 0 || edge->end > best->end ||
       (edge->end == best->end && depth > best->depth)) {
     best->end = edge->end;
     best->depth = depth;
