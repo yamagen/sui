@@ -842,7 +842,7 @@ static int emit_runtime_record(const Ledger *ledger,
   }
 
   tjson_skip_ws(&json);
-  if (json.pos != json.len) {
+  if (json.pos != json.length) {
     free(copy);
     return -1;
   }
