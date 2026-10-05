@@ -112,8 +112,11 @@ jq -e '
 
 reused=$(printf '%s\n' '男につきて何か' |
   "$SUI" -c "$candy_config" -u "$LEDGER")
-[ -z "$reused" ] ||
-  fail "candy surface reuse"
+printf '%s\n' "$reused" |
+jq -e '
+  select(.start == 15 and .end == 21 and .text == "何か")
+' >/dev/null ||
+  fail "unapproved candy does not advance"
 
 cat > "$candy" <<'EOF'
 !{"start":6,"end":21,"text":"竹の中に、","word":"","lemma":"","kana":"","lemma-kana":"","romaji":"","lemma-romaji":"","gloss":"","pos":""}
@@ -121,7 +124,10 @@ EOF
 
 reused=$(printf '%s\n' 'その竹の中に、' |
   "$SUI" -c "$candy_config" -u "$LEDGER")
-[ -z "$reused" ] ||
-  fail "incomplete candy surface reuse"
+printf '%s\n' "$reused" |
+jq -e '
+  select(.start == 6 and .end == 21 and .text == "竹の中に、")
+' >/dev/null ||
+  fail "unapproved incomplete candy does not advance"
 
 echo "PASS: sui regression tests"
