@@ -2193,10 +2193,14 @@ static size_t ignored_advance(const MkledgerConfig *config,
 }
 
 static size_t candy_approved_advance(const Ledger *ledger,
-                                     const char *input, size_t target_end) {
+                                     const char *input, size_t target_end,
+                                     char **accepted_text) {
   const char *base;
   size_t offset = 0;
   char *previous = NULL;
+
+  if (accepted_text != NULL)
+    *accepted_text = NULL;
 
   if (ledger->candy_map == NULL || ledger->candy_size == 0)
     return target_end;
@@ -2232,6 +2236,8 @@ static size_t candy_approved_advance(const Ledger *ledger,
           memcmp(input + target_end - previous_len, previous,
                  previous_len) == 0 &&
           memcmp(input + target_end, text, text_len) == 0) {
+        if (accepted_text != NULL)
+          *accepted_text = strdup(text);
         free(previous);
         free(text);
         return target_end + text_len;
@@ -2248,6 +2254,46 @@ static size_t candy_approved_advance(const Ledger *ledger,
 
   free(previous);
   return target_end;
+}
+
+static size_t resume_from_confirmed_surface(
+    const Ledger *ledger, const char *input, const Lattice *lat,
+    size_t target_end, const char *surface_text) {
+  size_t i;
+  size_t best_end = target_end;
+  size_t text_len;
+
+  if (surface_text == NULL)
+    return target_end;
+
+  text_len = strlen(surface_text);
+
+  for (i = 0; i < lat->n; i++) {
+    const LatticeEdge *edge = &lat->v[i];
+    uint32_t node;
+    LongestPath best;
+
+    if (edge->end != target_end || edge->end - edge->start != text_len)
+      continue;
+    if (memcmp(input + edge->start, surface_text, text_len) != 0)
+      continue;
+
+    node = trie_find(ledger, 0, edge->surface);
+    if (node == TRIE_NONE)
+      continue;
+
+    best.start = edge->start;
+    best.end = edge->end;
+    best.depth = 1;
+    best.freq = ledger->trie[node].freq;
+    best.surface = edge->surface;
+
+    find_longest_from(ledger, input, lat, i, node, 1, &best);
+    if (best.end > best_end)
+      best_end = best.end;
+  }
+
+  return best_end;
 }
 
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
@@ -2294,15 +2340,16 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
     for (;;) {
       size_t previous_end = target_end;
-      size_t candy_end = candy_approved_advance(ledger, input, target_end);
+      char *accepted_text = NULL;
+      size_t candy_end =
+          candy_approved_advance(ledger, input, target_end, &accepted_text);
 
       if (candy_end > target_end) {
         target_end = candy_end;
-
-        for (path = paths.v; path < paths.v + paths.n; path++)
-          if (path->start == target_end && path->end > target_end)
-            target_end = path->end;
+        target_end = resume_from_confirmed_surface(
+            ledger, input, &lat, target_end, accepted_text);
       }
+      free(accepted_text);
 
       for (;;) {
         size_t ignored_end = ignored_advance(config, input, target_end);
