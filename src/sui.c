@@ -14,9 +14,17 @@
 typedef struct {
   size_t start;
   size_t end;
+  uint32_t surface;
+} LatticeEdge;
+
+typedef struct {
+  size_t start;
+  size_t end;
   size_t depth;
   uint32_t freq;
   uint32_t surface;
+  LatticeEdge *route;
+  size_t route_n;
 } LongestPath;
 
 typedef struct {
@@ -43,12 +51,6 @@ typedef struct {
   void *candy_map;
   size_t candy_size;
 } Ledger;
-
-typedef struct {
-  size_t start;
-  size_t end;
-  uint32_t surface;
-} LatticeEdge;
 
 typedef struct {
   LatticeEdge *v;
@@ -200,9 +202,10 @@ static void follow_path(const Ledger *ledger, const char *input,
                         size_t depth);
 static void show_paths(const Ledger *ledger, const char *input,
                        const Lattice *lat);
-static void find_longest_from(const Ledger *ledger, const char *input,
-                              const Lattice *lat, size_t edge_index,
-                              uint32_t node, size_t depth, LongestPath *best);
+static int find_longest_from(const Ledger *ledger, const char *input,
+                             const Lattice *lat, size_t edge_index,
+                             uint32_t node, size_t depth, LongestPath *best,
+                             SelectedRoute *route);
 static int make_longest_paths(const Ledger *ledger, const char *input,
                               const Lattice *lat, LongestPathList *list);
 static void show_longest_paths(const char *input, const LongestPathList *list);
@@ -502,6 +505,10 @@ static void longest_path_list_init(LongestPathList *list) {
 }
 
 static void longest_path_list_free(LongestPathList *list) {
+  size_t i;
+
+  for (i = 0; i < list->n; i++)
+    free(list->v[i].route);
   free(list->v);
   list->v = NULL;
   list->n = 0;
@@ -523,7 +530,19 @@ static int longest_path_list_add(LongestPathList *list,
     list->cap = newcap;
   }
 
-  list->v[list->n++] = *path;
+  list->v[list->n] = *path;
+  list->v[list->n].route = NULL;
+
+  if (path->route_n != 0) {
+    list->v[list->n].route =
+        malloc(path->route_n * sizeof *list->v[list->n].route);
+    if (list->v[list->n].route == NULL)
+      return -1;
+    memcpy(list->v[list->n].route, path->route,
+           path->route_n * sizeof *path->route);
+  }
+
+  list->n++;
   return 0;
 }
 
@@ -617,6 +636,23 @@ static int selected_route_add(SelectedRoute *route, size_t start, size_t end,
   route->v[route->n].surface = surface;
   route->n++;
 
+  return 0;
+}
+
+static int longest_path_set_route(LongestPath *path,
+                                  const SelectedRoute *route) {
+  LatticeEdge *copy = NULL;
+
+  if (route->n != 0) {
+    copy = malloc(route->n * sizeof *copy);
+    if (copy == NULL)
+      return -1;
+    memcpy(copy, route->v, route->n * sizeof *copy);
+  }
+
+  free(path->route);
+  path->route = copy;
+  path->route_n = route->n;
   return 0;
 }
 
@@ -1417,11 +1453,15 @@ static void show_paths(const Ledger *ledger, const char *input,
   }
 }
 
-static void find_longest_from(const Ledger *ledger, const char *input,
-                              const Lattice *lat, size_t edge_index,
-                              uint32_t node, size_t depth, LongestPath *best) {
+static int find_longest_from(const Ledger *ledger, const char *input,
+                             const Lattice *lat, size_t edge_index,
+                             uint32_t node, size_t depth, LongestPath *best,
+                             SelectedRoute *route) {
   const LatticeEdge *edge = &lat->v[edge_index];
   size_t i;
+
+  if (selected_route_add(route, edge->start, edge->end, edge->surface) != 0)
+    return -1;
 
   if (edge->end > best->end ||
       (edge->end == best->end && depth > best->depth)) {
@@ -1429,6 +1469,10 @@ static void find_longest_from(const Ledger *ledger, const char *input,
     best->depth = depth;
     best->freq = ledger->trie[node].freq;
     best->surface = edge->surface;
+    if (longest_path_set_route(best, route) != 0) {
+      route->n--;
+      return -1;
+    }
   }
 
   for (i = 0; i < lat->n; i++) {
@@ -1442,8 +1486,15 @@ static void find_longest_from(const Ledger *ledger, const char *input,
     if (child == TRIE_NONE)
       continue;
 
-    find_longest_from(ledger, input, lat, i, child, depth + 1, best);
+    if (find_longest_from(ledger, input, lat, i, child, depth + 1, best,
+                          route) != 0) {
+      route->n--;
+      return -1;
+    }
   }
+
+  route->n--;
+  return 0;
 }
 
 static int make_longest_paths(const Ledger *ledger, const char *input,
@@ -1453,6 +1504,7 @@ static int make_longest_paths(const Ledger *ledger, const char *input,
   for (i = 0; i < lat->n; i++) {
     uint32_t node;
     LongestPath best;
+    SelectedRoute route;
 
     node = trie_find(ledger, 0, lat->v[i].surface);
     if (node == TRIE_NONE)
@@ -1463,11 +1515,22 @@ static int make_longest_paths(const Ledger *ledger, const char *input,
     best.depth = 1;
     best.freq = ledger->trie[node].freq;
     best.surface = lat->v[i].surface;
+    best.route = NULL;
+    best.route_n = 0;
+    selected_route_init(&route);
 
-    find_longest_from(ledger, input, lat, i, node, 1, &best);
-
-    if (longest_path_list_add(list, &best) != 0)
+    if (find_longest_from(ledger, input, lat, i, node, 1, &best, &route) != 0) {
+      selected_route_free(&route);
+      free(best.route);
       return -1;
+    }
+    selected_route_free(&route);
+
+    if (longest_path_list_add(list, &best) != 0) {
+      free(best.route);
+      return -1;
+    }
+    free(best.route);
   }
 
   return 0;
@@ -2339,10 +2402,23 @@ static size_t resume_from_confirmed_surface(
     best.depth = 1;
     best.freq = ledger->trie[node].freq;
     best.surface = edge->surface;
+    best.route = NULL;
+    best.route_n = 0;
 
-    find_longest_from(ledger, input, lat, i, node, 1, &best);
+    {
+      SelectedRoute route;
+      selected_route_init(&route);
+      if (find_longest_from(ledger, input, lat, i, node, 1, &best, &route) != 0) {
+        selected_route_free(&route);
+        free(best.route);
+        return best_end;
+      }
+      selected_route_free(&route);
+    }
+
     if (best.end > best_end)
       best_end = best.end;
+    free(best.route);
   }
 
   return best_end;
