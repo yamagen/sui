@@ -143,7 +143,8 @@ static int append_uncovered_adjacencies(const Ledger *ledger,
                                         const MkledgerConfig *config,
                                         const SuiInput *input,
                                         const Lattice *lat,
-                                        const LongestPathList *list);
+                                        const LongestPathList *list,
+                                        size_t resolved_end);
 
 static int schema_allows_type(const SchemaField *field, const char *type);
 static int is_provenance_name(const MkledgerConfig *config, const char *name);
@@ -247,7 +248,8 @@ static int append_uncovered_adjacencies(const Ledger *ledger,
                                         const MkledgerConfig *config,
                                         const SuiInput *input,
                                         const Lattice *lat,
-                                        const LongestPathList *list) {
+                                        const LongestPathList *list,
+                                        size_t resolved_end) {
   const LatticeEdge *a;
   const LatticeEdge *b;
   const LatticeEdge *best_a = NULL;
@@ -264,6 +266,8 @@ static int append_uncovered_adjacencies(const Ledger *ledger,
       const char *bs;
 
       if (!lattice_edges_connect(input->text, a, b))
+        continue;
+      if (b->end <= resolved_end)
         continue;
       if (reach_covers_adjacency(list, a, b))
         continue;
@@ -2218,7 +2222,8 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
     if (append_candy) {
       appended_adjacency =
-          append_uncovered_adjacencies(ledger, config, &parsed, &lat, &paths);
+          append_uncovered_adjacencies(ledger, config, &parsed, &lat, &paths,
+                                       target_end);
       if (appended_adjacency < 0) {
         longest_path_list_free(&paths);
         lattice_free(&lat);
