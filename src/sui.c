@@ -56,6 +56,17 @@ typedef struct {
   size_t cap;
 } Lattice;
 
+/*
+ * The selected route uses the same surface namespace and span representation
+ * as the lattice. The lattice holds all candidates; this list will hold only
+ * the route actually accepted by SUI.
+ */
+typedef struct {
+  LatticeEdge *v;
+  size_t n;
+  size_t cap;
+} SelectedRoute;
+
 typedef struct {
   size_t start;
   size_t end;
@@ -163,6 +174,11 @@ static void lattice_init(Lattice *lat);
 static void lattice_free(Lattice *lat);
 static int lattice_add(Lattice *lat, size_t start, size_t end,
                        uint32_t surface);
+
+static void selected_route_init(SelectedRoute *route);
+static void selected_route_free(SelectedRoute *route);
+static int selected_route_add(SelectedRoute *route, size_t start, size_t end,
+                              uint32_t surface);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -564,6 +580,42 @@ static int lattice_add(Lattice *lat, size_t start, size_t end,
   lat->v[lat->n].end = end;
   lat->v[lat->n].surface = surface;
   lat->n++;
+
+  return 0;
+}
+
+static void selected_route_init(SelectedRoute *route) {
+  route->v = NULL;
+  route->n = 0;
+  route->cap = 0;
+}
+
+static void selected_route_free(SelectedRoute *route) {
+  free(route->v);
+  route->v = NULL;
+  route->n = 0;
+  route->cap = 0;
+}
+
+static int selected_route_add(SelectedRoute *route, size_t start, size_t end,
+                              uint32_t surface) {
+  LatticeEdge *tmp;
+
+  if (route->n == route->cap) {
+    size_t newcap = (route->cap == 0) ? 16 : route->cap * 2;
+
+    tmp = realloc(route->v, newcap * sizeof *route->v);
+    if (tmp == NULL)
+      return -1;
+
+    route->v = tmp;
+    route->cap = newcap;
+  }
+
+  route->v[route->n].start = start;
+  route->v[route->n].end = end;
+  route->v[route->n].surface = surface;
+  route->n++;
 
   return 0;
 }
