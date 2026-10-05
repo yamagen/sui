@@ -81,7 +81,8 @@ jq --arg filename "$candy" '
     "pos": "string",
     "ku": "string"
   } |
-  .candy.filename = $filename
+  .candy.filename = $filename |
+  .ledger.ignore = ["、", "。"]
 ' tests/ledger-config.json >"$candy_config"
 
 printf '%s\n' '{"text":"男につきて何か","provenance":{"corpus":"taketori","id":37,"token":5}}' |
