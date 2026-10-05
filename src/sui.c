@@ -1283,6 +1283,17 @@ static char *runtime_surface_string(const Ledger *ledger,
   return text;
 }
 
+static uint32_t runtime_surface_at_offset(const Ledger *ledger,
+                                          size_t offset) {
+  size_t i;
+
+  for (i = 0; i < ledger->runtime_surface_count; i++)
+    if (ledger->runtime_surface_offsets[i] == offset)
+      return ledger->null_surface + 1 + (uint32_t)i;
+
+  return ledger->null_surface;
+}
+
 static void unload_ledger(Ledger *ledger) {
   free(ledger->runtime_surface_offsets);
 
@@ -2309,13 +2320,16 @@ static size_t ignored_advance(const MkledgerConfig *config,
 
 static size_t candy_approved_advance(const Ledger *ledger,
                                      const char *input, size_t target_end,
-                                     char **accepted_text) {
+                                     char **accepted_text,
+                                     uint32_t *accepted_surface) {
   const char *base;
   size_t offset = 0;
   char *previous = NULL;
 
   if (accepted_text != NULL)
     *accepted_text = NULL;
+  if (accepted_surface != NULL)
+    *accepted_surface = ledger->null_surface;
 
   if (ledger->candy_map == NULL || ledger->candy_size == 0)
     return target_end;
@@ -2353,6 +2367,8 @@ static size_t candy_approved_advance(const Ledger *ledger,
           memcmp(input + target_end, text, text_len) == 0) {
         if (accepted_text != NULL)
           *accepted_text = strdup(text);
+        if (accepted_surface != NULL)
+          *accepted_surface = runtime_surface_at_offset(ledger, offset);
         free(previous);
         free(text);
         return target_end + text_len;
@@ -2373,7 +2389,7 @@ static size_t candy_approved_advance(const Ledger *ledger,
 
 static size_t resume_from_confirmed_surface(
     const Ledger *ledger, const char *input, const Lattice *lat,
-    size_t target_end, const char *surface_text) {
+    size_t target_end, const char *surface_text, SelectedRoute *accepted) {
   size_t i;
   size_t best_end = target_end;
   size_t text_len;
@@ -2416,8 +2432,20 @@ static size_t resume_from_confirmed_surface(
       selected_route_free(&route);
     }
 
-    if (best.end > best_end)
+    if (best.end > best_end) {
+      size_t j;
+
       best_end = best.end;
+      if (accepted != NULL) {
+        for (j = 1; j < best.route_n; j++)
+          if (selected_route_add(accepted, best.route[j].start,
+                                 best.route[j].end,
+                                 best.route[j].surface) != 0) {
+            free(best.route);
+            return best_end;
+          }
+      }
+    }
     free(best.route);
   }
 
@@ -2451,9 +2479,12 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
   if (!monitor) {
     LongestPathList paths;
     const LongestPath *path;
+    const LongestPath *initial = NULL;
+    SelectedRoute accepted;
     size_t target_end = 0;
 
     longest_path_list_init(&paths);
+    selected_route_init(&accepted);
 
     if (make_longest_paths(ledger, input, &lat, &paths) != 0) {
       longest_path_list_free(&paths);
@@ -2463,19 +2494,47 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
     }
 
     for (path = paths.v; path < paths.v + paths.n; path++)
-      if (path->start == 0 && path->end > target_end)
+      if (path->start == 0 && path->end > target_end) {
         target_end = path->end;
+        initial = path;
+      }
+
+    if (initial != NULL) {
+      size_t i;
+      for (i = 0; i < initial->route_n; i++)
+        if (selected_route_add(&accepted, initial->route[i].start,
+                               initial->route[i].end,
+                               initial->route[i].surface) != 0) {
+          selected_route_free(&accepted);
+          longest_path_list_free(&paths);
+          lattice_free(&lat);
+          free_sui_input(&parsed);
+          return -1;
+        }
+    }
 
     for (;;) {
       size_t previous_end = target_end;
       char *accepted_text = NULL;
-      size_t candy_end =
-          candy_approved_advance(ledger, input, target_end, &accepted_text);
+      uint32_t accepted_surface = ledger->null_surface;
+      size_t candy_start = target_end;
+      size_t candy_end = candy_approved_advance(
+          ledger, input, target_end, &accepted_text, &accepted_surface);
 
       if (candy_end > target_end) {
+        if (accepted_surface > ledger->null_surface &&
+            selected_route_add(&accepted, candy_start, candy_end,
+                               accepted_surface) != 0) {
+          free(accepted_text);
+          selected_route_free(&accepted);
+          longest_path_list_free(&paths);
+          lattice_free(&lat);
+          free_sui_input(&parsed);
+          return -1;
+        }
         target_end = candy_end;
         target_end = resume_from_confirmed_surface(
-            ledger, input, &lat, target_end, accepted_text);
+            ledger, input, &lat, target_end, accepted_text, &accepted);
       }
       free(accepted_text);
 
@@ -2548,6 +2607,7 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       return -1;
     }
 
+    selected_route_free(&accepted);
     longest_path_list_free(&paths);
     lattice_free(&lat);
     free_sui_input(&parsed);
