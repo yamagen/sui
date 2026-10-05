@@ -3191,6 +3191,8 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
+  (void)best; /* best-output semantics are implemented in the next step. */
+
   path = argv[optind];
 
   if (append_candy && config_path == NULL) {
