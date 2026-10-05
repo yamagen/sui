@@ -90,6 +90,50 @@ static void show_uncovered_adjacencies(const Ledger *ledger,
                                        const MkledgerConfig *config,
                                        const char *input, const Lattice *lat,
                                        const LongestPathList *list);
+static int candy_has_work_pair(const Ledger *ledger,
+                               const MkledgerConfig *config,
+                               const SuiInput *input,
+                               const LatticeEdge *a, const char *as,
+                               const LatticeEdge *b, const char *bs) {
+  char *pair = NULL;
+  size_t pair_len = 0;
+  FILE *fp;
+  const char *base;
+  size_t offset = 0;
+
+  if (ledger->candy_map == NULL || ledger->candy_size == 0)
+    return 0;
+
+  fp = open_memstream(&pair, &pair_len);
+  if (fp == NULL)
+    return -1;
+
+  if (emit_adjacency_work_row(fp, config, input, a, as) != 0 ||
+      emit_adjacency_work_row(fp, config, input, b, bs) != 0 ||
+      fclose(fp) != 0) {
+    free(pair);
+    return -1;
+  }
+
+  base = (const char *)ledger->candy_map;
+
+  while (offset + pair_len <= ledger->candy_size) {
+    if ((offset == 0 || base[offset - 1] == '\n') &&
+        memcmp(base + offset, pair, pair_len) == 0) {
+      free(pair);
+      return 1;
+    }
+
+    const char *nl = memchr(base + offset, '\n', ledger->candy_size - offset);
+    if (nl == NULL)
+      break;
+    offset = (size_t)(nl - base) + 1;
+  }
+
+  free(pair);
+  return 0;
+}
+
 static int append_uncovered_adjacencies(const Ledger *ledger,
                                         const MkledgerConfig *config,
                                         const SuiInput *input,
@@ -259,6 +303,26 @@ static int append_uncovered_adjacencies(const Ledger *ledger,
     if (best_b->surface > ledger->null_surface)
       free((char *)best_bs);
     return -1;
+  }
+
+  int already_present =
+      candy_has_work_pair(ledger, config, input, best_a, best_as,
+                          best_b, best_bs);
+
+  if (already_present < 0) {
+    if (best_a->surface > ledger->null_surface)
+      free((char *)best_as);
+    if (best_b->surface > ledger->null_surface)
+      free((char *)best_bs);
+    return -1;
+  }
+
+  if (already_present) {
+    if (best_a->surface > ledger->null_surface)
+      free((char *)best_as);
+    if (best_b->surface > ledger->null_surface)
+      free((char *)best_bs);
+    return 1;
   }
 
   fp = fopen(config->candy.filename, "a");
