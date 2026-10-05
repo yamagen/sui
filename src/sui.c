@@ -805,7 +805,9 @@ static int emit_runtime_record(const Ledger *ledger,
   if (copy == NULL)
     return -1;
 
-  printf("{\"start\":%zu,\"end\":%zu", edge->start, edge->end);
+  int first_field = 1;
+
+  putchar('{');
 
   tjson_init(&json, "candy", copy);
   tjson_skip_ws(&json);
