@@ -252,7 +252,8 @@ static char *parse_candy_text(const char *line);
 static int index_candy_surfaces(Ledger *ledger,
                                 const MkledgerConfig *config);
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
-                         int monitor, int unresolved, int append_candy);
+                         int monitor, int unresolved, int append_candy,
+                         int best);
 
 static int emit_adjacency_work_row(FILE *fp, const MkledgerConfig *config,
                                    const SuiInput *input,
@@ -2833,7 +2834,8 @@ static size_t resume_from_confirmed_surface(
 }
 
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
-                         int monitor, int unresolved, int append_candy) {
+                         int monitor, int unresolved, int append_candy,
+                         int best) {
   char line[4096];
   SuiInput parsed;
   const char *input;
@@ -2849,6 +2851,8 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
   input = parsed.text;
   lattice_init(&lat);
+
+  (void)best; /* best-output evaluation is added independently of routing. */
 
   if (make_lattice(ledger, input, &lat) != 0) {
     free_sui_input(&parsed);
@@ -3191,8 +3195,6 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  (void)best; /* best-output semantics are implemented in the next step. */
-
   path = argv[optind];
 
   if (append_candy && config_path == NULL) {
@@ -3229,7 +3231,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (process_input(&ledger, config_path == NULL ? NULL : &config, monitor,
-                    unresolved, append_candy) != 0) {
+                    unresolved, append_candy, best) != 0) {
     unload_ledger(&ledger);
     free_mkledger_config(&config);
     return EXIT_FAILURE;
