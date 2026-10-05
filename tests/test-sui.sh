@@ -130,4 +130,23 @@ jq -e '
 ' >/dev/null ||
   fail "unapproved incomplete candy does not advance"
 
+
+cat > "$candy" <<'EOF'
+{"start":6,"end":21,"text":"竹","word":"竹","lemma":"竹","kana":"たけ","lemma-kana":"たけ","romaji":"take","lemma-romaji":"take","gloss":"bamboo","pos":"N"}
+{"start":9,"end":21,"text":"の","word":"の","lemma":"の","kana":"の","lemma-kana":"の","romaji":"no","lemma-romaji":"no","gloss":"GEN","pos":"P"}
+EOF
+
+mixed=$(printf '%s\n' 'その竹の中に、' |
+  "$SUI" -c "$candy_config" "$LEDGER")
+printf '%s\n' "$mixed" |
+jq -e '
+  select(.start == 0 and .end == 21 and
+         (.records | length) == 5 and
+         [.records[].word] == ["その", "竹", "の", "中", "に"] and
+         all(.records[]; has("start") | not) and
+         all(.records[]; has("end") | not) and
+         all(.records[]; has("text") | not))
+' >/dev/null ||
+  fail "approved candy bridges ledger runs"
+
 echo "PASS: sui regression tests"
