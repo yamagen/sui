@@ -2721,6 +2721,8 @@ static size_t resume_from_confirmed_surface(
   size_t i;
   size_t best_end = target_end;
   size_t text_len;
+  LatticeEdge *best_route = NULL;
+  size_t best_route_n = 0;
 
   if (surface_text == NULL)
     return target_end;
@@ -2755,28 +2757,37 @@ static size_t resume_from_confirmed_surface(
       if (find_longest_from(ledger, input, lat, i, node, 1, &best, &route) != 0) {
         selected_route_free(&route);
         free(best.route);
+        free(best_route);
         return best_end;
       }
       selected_route_free(&route);
     }
 
     if (best.end > best_end) {
-      size_t j;
-
+      free(best_route);
+      best_route = best.route;
+      best_route_n = best.route_n;
+      best.route = NULL;
+      best.route_n = 0;
       best_end = best.end;
-      if (accepted != NULL) {
-        for (j = 1; j < best.route_n; j++)
-          if (selected_route_add(accepted, best.route[j].start,
-                                 best.route[j].end,
-                                 best.route[j].surface) != 0) {
-            free(best.route);
-            return best_end;
-          }
-      }
     }
+
     free(best.route);
   }
 
+  if (accepted != NULL && best_route != NULL) {
+    size_t j;
+
+    for (j = 1; j < best_route_n; j++)
+      if (selected_route_add(accepted, best_route[j].start,
+                             best_route[j].end,
+                             best_route[j].surface) != 0) {
+        free(best_route);
+        return best_end;
+      }
+  }
+
+  free(best_route);
   return best_end;
 }
 
