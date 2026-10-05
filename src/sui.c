@@ -90,6 +90,11 @@ static void show_uncovered_adjacencies(const Ledger *ledger,
                                        const MkledgerConfig *config,
                                        const char *input, const Lattice *lat,
                                        const LongestPathList *list);
+static int emit_adjacency_work_row(FILE *fp, const MkledgerConfig *config,
+                                   const SuiInput *input,
+                                   const LatticeEdge *edge,
+                                   const char *word);
+
 static int candy_has_work_pair(const Ledger *ledger,
                                const MkledgerConfig *config,
                                const SuiInput *input,
