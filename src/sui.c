@@ -2273,8 +2273,10 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       size_t previous_end = target_end;
       size_t candy_end = candy_approved_advance(ledger, input, target_end);
 
-      if (candy_end > target_end)
-        target_end = candy_end;
+      if (candy_end <= target_end)
+        break;
+
+      target_end = candy_end;
 
       for (path = paths.v; path < paths.v + paths.n; path++)
         if (path->start == target_end && path->end > target_end)
