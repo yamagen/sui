@@ -112,7 +112,7 @@ jq -e '
 
 reused=$(printf '%s\n' '男につきて何か' |
   "$SUI" -c "$candy_config" -u "$LEDGER")
-printf '%s\n' "$reused" |
+printf '%s\n' "${reused#!}" |
 jq -e '
   select(.start == 15 and .end == 21 and .text == "何か")
 ' >/dev/null ||
@@ -124,7 +124,7 @@ EOF
 
 reused=$(printf '%s\n' 'その竹の中に、' |
   "$SUI" -c "$candy_config" -u "$LEDGER")
-printf '%s\n' "$reused" |
+printf '%s\n' "${reused#!}" |
 jq -e '
   select(.start == 6 and .end == 21 and .text == "竹の中に、")
 ' >/dev/null ||
