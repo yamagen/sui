@@ -132,6 +132,7 @@ jq -e '
 
 
 cat > "$candy" <<'EOF'
+{"start":0,"end":21,"text":"その","word":"その","lemma":"その","kana":"その","lemma-kana":"その","romaji":"sono","lemma-romaji":"sono","gloss":"that","pos":"ADN"}
 {"start":6,"end":21,"text":"竹","word":"竹","lemma":"竹","kana":"たけ","lemma-kana":"たけ","romaji":"take","lemma-romaji":"take","gloss":"bamboo","pos":"N"}
 {"start":9,"end":21,"text":"の","word":"の","lemma":"の","kana":"の","lemma-kana":"の","romaji":"no","lemma-romaji":"no","gloss":"GEN","pos":"P"}
 EOF
