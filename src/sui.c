@@ -70,6 +70,17 @@ typedef struct {
 } SelectedRoute;
 
 typedef struct {
+  size_t first;
+  size_t count;
+} RouteRun;
+
+typedef struct {
+  RouteRun *v;
+  size_t n;
+  size_t cap;
+} RouteRunList;
+
+typedef struct {
   size_t start;
   size_t end;
 } Gap;
@@ -181,6 +192,11 @@ static void selected_route_init(SelectedRoute *route);
 static void selected_route_free(SelectedRoute *route);
 static int selected_route_add(SelectedRoute *route, size_t start, size_t end,
                               uint32_t surface);
+static void route_run_list_init(RouteRunList *runs);
+static void route_run_list_free(RouteRunList *runs);
+static int split_selected_route(const Ledger *ledger,
+                                const SelectedRoute *route,
+                                RouteRunList *runs);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -635,6 +651,67 @@ static int selected_route_add(SelectedRoute *route, size_t start, size_t end,
   route->v[route->n].end = end;
   route->v[route->n].surface = surface;
   route->n++;
+
+  return 0;
+}
+
+static void route_run_list_init(RouteRunList *runs) {
+  runs->v = NULL;
+  runs->n = 0;
+  runs->cap = 0;
+}
+
+static void route_run_list_free(RouteRunList *runs) {
+  free(runs->v);
+  runs->v = NULL;
+  runs->n = 0;
+  runs->cap = 0;
+}
+
+static int route_run_list_add(RouteRunList *runs, size_t first,
+                              size_t count) {
+  RouteRun *tmp;
+
+  if (runs->n == runs->cap) {
+    size_t newcap = runs->cap == 0 ? 8 : runs->cap * 2;
+
+    tmp = realloc(runs->v, newcap * sizeof *runs->v);
+    if (tmp == NULL)
+      return -1;
+
+    runs->v = tmp;
+    runs->cap = newcap;
+  }
+
+  runs->v[runs->n].first = first;
+  runs->v[runs->n].count = count;
+  runs->n++;
+  return 0;
+}
+
+static int split_selected_route(const Ledger *ledger,
+                                const SelectedRoute *route,
+                                RouteRunList *runs) {
+  size_t first;
+
+  if (route->n == 0)
+    return 0;
+
+  first = 0;
+
+  while (first < route->n) {
+    bool runtime = route->v[first].surface > ledger->null_surface;
+    size_t end = first + 1;
+
+    while (end < route->n &&
+           (route->v[end].surface > ledger->null_surface) == runtime)
+      end++;
+
+    if (route_run_list_add(runs, first, end - first) != 0)
+      return -1;
+
+    first = end;
+  }
 
   return 0;
 }
@@ -2548,6 +2625,21 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
       if (target_end <= previous_end)
         break;
+    }
+
+    {
+      RouteRunList runs;
+
+      route_run_list_init(&runs);
+      if (split_selected_route(ledger, &accepted, &runs) != 0) {
+        route_run_list_free(&runs);
+        selected_route_free(&accepted);
+        longest_path_list_free(&paths);
+        lattice_free(&lat);
+        free_sui_input(&parsed);
+        return -1;
+      }
+      route_run_list_free(&runs);
     }
 
     int appended_adjacency = 0;
