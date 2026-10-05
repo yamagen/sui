@@ -879,7 +879,8 @@ static int emit_mixed_route_from(const Ledger *ledger,
     size_t r;
     int first_record = 1;
 
-    printf("{\"start\":%zu,\"end\":%zu,\"records\":[",\n           route->v[0].start, target_end);
+    printf("{\"start\":%zu,\"end\":%zu,\"records\":[",
+           route->v[0].start, target_end);
 
     for (r = 0; r < runs->n; r++) {
       const RouteRun *out_run = &runs->v[r];
