@@ -807,6 +807,46 @@ static int emit_runtime_record(const Ledger *ledger,
 
   int first_field = 1;
 
+  tjson_init(&json, "candy", copy);
+  tjson_skip_ws(&json);
+  tjson_expect(&json, '{');
+
+  for (;;) {
+    char *key;
+
+    tjson_skip_ws(&json);
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    key = tjson_parse_string(&json);
+    free(key);
+    tjson_skip_ws(&json);
+    tjson_expect(&json, ':');
+    tjson_skip_ws(&json);
+    tjson_skip_value(&json);
+    tjson_skip_ws(&json);
+
+    if (tjson_peek(&json) == ',') {
+      tjson_expect(&json, ',');
+      continue;
+    }
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    free(copy);
+    return -1;
+  }
+
+  tjson_skip_ws(&json);
+  if (json.pos != json.len) {
+    free(copy);
+    return -1;
+  }
+
   putchar('{');
 
   tjson_init(&json, "candy", copy);
