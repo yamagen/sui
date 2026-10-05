@@ -778,11 +778,14 @@ static int selected_route_has_runtime(const Ledger *ledger,
   return 0;
 }
 
-static int emit_runtime_record(const Ledger *ledger, uint32_t surface) {
-  size_t offset = runtime_surface_offset(ledger, surface);
+static int emit_runtime_record(const Ledger *ledger,
+                               const LatticeEdge *edge) {
+  size_t offset = runtime_surface_offset(ledger, edge->surface);
   const char *line;
   const char *nl;
   size_t line_len;
+  char *copy;
+  tjson_t json;
 
   if (offset == SIZE_MAX || offset >= ledger->candy_size ||
       ledger->candy_map == NULL)
@@ -798,7 +801,67 @@ static int emit_runtime_record(const Ledger *ledger, uint32_t surface) {
   if (line_len == 0 || line[0] == '!')
     return -1;
 
-  return fwrite(line, 1, line_len, stdout) == line_len ? 0 : -1;
+  copy = strndup(line, line_len);
+  if (copy == NULL)
+    return -1;
+
+  printf("{\"start\":%zu,\"end\":%zu", edge->start, edge->end);
+
+  tjson_init(&json, "candy", copy);
+  tjson_skip_ws(&json);
+  tjson_expect(&json, '{');
+
+  for (;;) {
+    char *key;
+    size_t value_start;
+    size_t value_end;
+
+    tjson_skip_ws(&json);
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    key = tjson_parse_string(&json);
+    tjson_skip_ws(&json);
+    tjson_expect(&json, ':');
+    tjson_skip_ws(&json);
+
+    value_start = json.pos;
+    tjson_skip_value(&json);
+    value_end = json.pos;
+
+    if (strcmp(key, "start") != 0 && strcmp(key, "end") != 0 &&
+        strcmp(key, "text") != 0) {
+      putchar(',');
+      print_json_string_to(stdout, key);
+      putchar(':');
+      if (fwrite(copy + value_start, 1, value_end - value_start, stdout) !=
+          value_end - value_start) {
+        free(key);
+        free(copy);
+        return -1;
+      }
+    }
+
+    free(key);
+    tjson_skip_ws(&json);
+
+    if (tjson_peek(&json) == ',') {
+      tjson_expect(&json, ',');
+      continue;
+    }
+    if (tjson_peek(&json) == '}') {
+      tjson_expect(&json, '}');
+      break;
+    }
+
+    free(copy);
+    return -1;
+  }
+
+  free(copy);
+  return putchar('}') == EOF ? -1 : 0;
 }
 
 static int emit_mixed_route_from(const Ledger *ledger,
@@ -824,7 +887,7 @@ static int emit_mixed_route_from(const Ledger *ledger,
           if (!first_record)
             putchar(',');
           if (emit_runtime_record(
-                  ledger, route->v[out_run->first + j].surface) != 0)
+                  ledger, &route->v[out_run->first + j]) != 0)
             return -1;
           first_record = 0;
         }
