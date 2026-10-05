@@ -14,6 +14,11 @@ printf '%s\n' "$full" |
   jq -e 'select(.start == 0 and .end == 15 and (.records | length) == 4)' >/dev/null ||
   fail "full path"
 
+best_compat=$(printf '%s\n' '男につきて' | "$SUI" -b "$LEDGER")
+printf '%s\n' "$best_compat" |
+  jq -e 'select(.start == 0 and .end == 15 and (.records | length) == 4)' >/dev/null ||
+  fail "best option compatibility"
+
 partial=$(printf '%s\n' '男につきて何か' | "$SUI" "$LEDGER")
 printf '%s\n' "$partial" |
   jq -e 'select(.start == 0 and .end == 15 and (.records | length) == 4)' >/dev/null ||
