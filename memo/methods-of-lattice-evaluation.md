@@ -35,6 +35,28 @@ cases this should result in one JSON line.
 Among competing lattice routes, prefer the route that requires fewer switches
 between attested sequences.
 
+Call this measure **the number of sequence changes ("transfers")**.  It is
+deliberately literal: SUI counts how many times a route must leave one
+continuous attested run and transfer to another source of continuity.
+
+For example:
+
+```
+A -> A -> A       transfers = 0
+A -> B            transfers = 1
+A -> candy -> B   transfers = 2
+```
+
+Candy therefore participates in the same evaluation principle.  Moving from an
+attested ledger sequence to a candy bridge is one transfer; leaving that bridge
+for another attested ledger sequence is another.
+
+This is not precision or recall against a predefined gold segmentation.  SUI
+does not claim that the route with fewer transfers is the linguistically
+correct word analysis.  It makes the narrower, directly observable statement
+that this route can be traversed with fewer changes among continuities attested
+or explicitly approved in the data.
+
 The primary criterion is continuity of attested sequence, not a predefined word
 dictionary.
 
