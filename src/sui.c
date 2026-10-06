@@ -197,6 +197,7 @@ static void route_run_list_free(RouteRunList *runs);
 static int split_selected_route(const Ledger *ledger,
                                 const SelectedRoute *route,
                                 RouteRunList *runs);
+static size_t route_transfer_count(const RouteRunList *runs);
 static int ledger_run_matches(const Ledger *ledger,
                               const SelectedRoute *route,
                               const RouteRun *run,
@@ -726,6 +727,10 @@ static int split_selected_route(const Ledger *ledger,
   }
 
   return 0;
+}
+
+static size_t route_transfer_count(const RouteRunList *runs) {
+  return runs->n == 0 ? 0 : runs->n - 1;
 }
 
 static int ledger_run_matches(const Ledger *ledger,
