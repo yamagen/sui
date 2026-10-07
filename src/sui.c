@@ -424,81 +424,6 @@ static void candy_candidate_list_init(CandyCandidateList *list);
 static void candy_candidate_list_free(CandyCandidateList *list);
 static int candy_candidate_list_add(CandyCandidateList *list, size_t end,
                                     const char *text, uint32_t surface);
-static size_t resume_from_root_paths(
-    const Ledger *ledger, const LongestPathList *paths, size_t target_end,
-    SelectedRoute *accepted, int best_mode) {
-  const LongestPath *path;
-  const LongestPath *best_path = NULL;
-  size_t best_end = target_end;
-  RouteEvaluation best_evaluation = {0};
-  int have_evaluation = 0;
-
-  for (path = paths->v; path < paths->v + paths->n; path++) {
-    SelectedRoute candidate;
-    RouteEvaluation evaluation;
-    size_t i;
-
-    if (path->start != target_end || path->end <= target_end)
-      continue;
-    if (path->end < best_end)
-      continue;
-    if (!best_mode && path->end == best_end && best_path != NULL)
-      continue;
-
-    if (!best_mode) {
-      best_path = path;
-      best_end = path->end;
-      continue;
-    }
-
-    selected_route_init(&candidate);
-
-    for (i = 0; i < accepted->n; i++)
-      if (selected_route_add(&candidate, accepted->v[i].start,
-                             accepted->v[i].end,
-                             accepted->v[i].surface) != 0) {
-        selected_route_free(&candidate);
-        return target_end;
-      }
-
-    for (i = 0; i < path->route_n; i++)
-      if (selected_route_add(&candidate, path->route[i].start,
-                             path->route[i].end,
-                             path->route[i].surface) != 0) {
-        selected_route_free(&candidate);
-        return target_end;
-      }
-
-    if (evaluate_selected_route(ledger, &candidate, &evaluation) != 0) {
-      selected_route_free(&candidate);
-      return target_end;
-    }
-
-    selected_route_free(&candidate);
-
-    if (path->end > best_end || !have_evaluation ||
-        (path->end == best_end &&
-         route_evaluation_compare(&evaluation, &best_evaluation) < 0)) {
-      best_path = path;
-      best_end = path->end;
-      best_evaluation = evaluation;
-      have_evaluation = 1;
-    }
-  }
-
-  if (best_path != NULL) {
-    size_t i;
-
-    for (i = 0; i < best_path->route_n; i++)
-      if (selected_route_add(accepted, best_path->route[i].start,
-                             best_path->route[i].end,
-                             best_path->route[i].surface) != 0)
-        return target_end;
-  }
-
-  return best_end;
-}
-
 static int longest_path_set_route(LongestPath *path,
                                   const SelectedRoute *route);
 
@@ -1813,7 +1738,7 @@ static int emit_mixed_route_from(const Ledger *ledger,
     size_t r;
     int first_record = 1;
 
-    printf("{\"start\":%zu,\"end\":%zu,\"records\":[",
+    printf("{\"start\":%zu,\"end\":%zu,\"records\":[\n",
            route->v[0].start, target_end);
 
     for (r = 0; r < runs->n; r++) {
@@ -1824,7 +1749,7 @@ static int emit_mixed_route_from(const Ledger *ledger,
       if (first_edge->surface > ledger->null_surface) {
         for (j = 0; j < out_run->count; j++) {
           if (!first_record)
-            putchar(',');
+            fputs(",\n", stdout);
           if (emit_runtime_record(
                   ledger, &route->v[out_run->first + j]) != 0)
             return -1;
@@ -1833,7 +1758,7 @@ static int emit_mixed_route_from(const Ledger *ledger,
       } else {
         for (j = 0; j < out_run->count; j++) {
           if (!first_record)
-            putchar(',');
+            fputs(",\n", stdout);
           if (emit_occurrence(ledger, ledger_first[r] + j) != 0)
             return -1;
           first_record = 0;
@@ -1841,7 +1766,7 @@ static int emit_mixed_route_from(const Ledger *ledger,
       }
     }
 
-    fputs("]}\n", stdout);
+    fputs("\n]}\n", stdout);
     return 0;
   }
 
@@ -1881,12 +1806,12 @@ static int emit_best_mixed_route(const Ledger *ledger,
   if (collect_route_occurrence_matches(ledger, route, runs, &matches) != 0)
     return -1;
 
-  printf("{\"start\":%zu,\"end\":%zu,\"records\":[",
+  printf("{\"start\":%zu,\"end\":%zu,\"records\":[\n",
          route->v[0].start, target_end);
 
   for (i = 0; i < route->n; i++) {
     if (!first_record)
-      putchar(',');
+      fputs(",\n", stdout);
 
     if (route->v[i].surface > ledger->null_surface) {
       if (emit_runtime_record(ledger, &route->v[i]) != 0) {
@@ -1988,7 +1913,7 @@ static int emit_best_mixed_route(const Ledger *ledger,
     first_record = 0;
   }
 
-  fputs("]}\n", stdout);
+  fputs("\n]}\n", stdout);
   route_occurrence_matches_free(&matches);
   return ferror(stdout) ? -1 : 0;
 }
@@ -3501,7 +3426,7 @@ static int emit_observed_path_from(
         return -1;
     }
 
-    fputs("]}\n", stdout);
+    fputs("\n]}\n", stdout);
   }
 
   return 0;
