@@ -81,6 +81,10 @@ typedef struct {
 } RouteRunList;
 
 typedef struct {
+  size_t transfers;
+} RouteEvaluation;
+
+typedef struct {
   size_t start;
   size_t end;
 } Gap;
@@ -200,7 +204,9 @@ static int split_selected_route(const Ledger *ledger,
 static size_t route_transfer_count(const RouteRunList *runs);
 static int evaluate_selected_route(const Ledger *ledger,
                                    const SelectedRoute *route,
-                                   size_t *transfers);
+                                   RouteEvaluation *evaluation);
+static int route_evaluation_compare(const RouteEvaluation *a,
+                                    const RouteEvaluation *b);
 static int ledger_run_matches(const Ledger *ledger,
                               const SelectedRoute *route,
                               const RouteRun *run,
@@ -738,7 +744,7 @@ static size_t route_transfer_count(const RouteRunList *runs) {
 
 static int evaluate_selected_route(const Ledger *ledger,
                                    const SelectedRoute *route,
-                                   size_t *transfers) {
+                                   RouteEvaluation *evaluation) {
   RouteRunList runs;
 
   route_run_list_init(&runs);
@@ -747,8 +753,17 @@ static int evaluate_selected_route(const Ledger *ledger,
     return -1;
   }
 
-  *transfers = route_transfer_count(&runs);
+  evaluation->transfers = route_transfer_count(&runs);
   route_run_list_free(&runs);
+  return 0;
+}
+
+static int route_evaluation_compare(const RouteEvaluation *a,
+                                    const RouteEvaluation *b) {
+  if (a->transfers < b->transfers)
+    return -1;
+  if (a->transfers > b->transfers)
+    return 1;
   return 0;
 }
 
@@ -2960,16 +2975,16 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
     {
       RouteRunList runs;
-      size_t transfers;
+      RouteEvaluation evaluation;
 
-      if (evaluate_selected_route(ledger, &accepted, &transfers) != 0) {
+      if (evaluate_selected_route(ledger, &accepted, &evaluation) != 0) {
         selected_route_free(&accepted);
         longest_path_list_free(&paths);
         lattice_free(&lat);
         free_sui_input(&parsed);
         return -1;
       }
-      (void)transfers; /* Route comparison will consume this next. */
+      (void)evaluation; /* Candidate comparison will consume this next. */
 
       route_run_list_init(&runs);
       if (split_selected_route(ledger, &accepted, &runs) != 0) {
