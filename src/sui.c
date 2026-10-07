@@ -4139,8 +4139,9 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
         target_end = ignored_end;
       }
 
-      target_end = resume_from_root_paths(
-          ledger, &paths, target_end, &accepted, best);
+      if (selected_route_has_runtime(ledger, &accepted))
+        target_end = resume_from_root_paths(
+            ledger, &paths, target_end, &accepted, best);
 
       if (target_end <= previous_end)
         break;
