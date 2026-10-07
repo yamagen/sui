@@ -368,6 +368,8 @@ static void provenance_view_list_free(ProvenanceViewList *list);
 static int collect_occurrence_provenance(
     const Ledger *ledger, const OccurrenceMatchList *occurrences,
     ProvenanceViewList *list);
+static int emit_provenance_list(const Ledger *ledger,
+                                const ProvenanceViewList *list);
 static int emit_best_mixed_route(const Ledger *ledger,
                                  const SelectedRoute *route,
                                  const RouteRunList *runs,
@@ -1353,6 +1355,7 @@ static int emit_best_mixed_route(const Ledger *ledger,
     } else {
       OccurrenceMatchList occurrences;
       AggregatedRecord record;
+      ProvenanceViewList provenance;
 
       if (collect_route_position_occurrences(
               ledger, route, runs, &matches, i, &occurrences) != 0) {
@@ -1366,8 +1369,25 @@ static int emit_best_mixed_route(const Ledger *ledger,
         return -1;
       }
 
+      if (collect_occurrence_provenance(
+              ledger, &occurrences, &provenance) != 0) {
+        aggregated_record_free(&record);
+        occurrence_match_list_free(&occurrences);
+        route_occurrence_matches_free(&matches);
+        return -1;
+      }
+
       putchar('{');
       if (emit_aggregated_record_fields(&record) != 0) {
+        provenance_view_list_free(&provenance);
+        aggregated_record_free(&record);
+        occurrence_match_list_free(&occurrences);
+        route_occurrence_matches_free(&matches);
+        return -1;
+      }
+      fputs(",\"provenance\":", stdout);
+      if (emit_provenance_list(ledger, &provenance) != 0) {
+        provenance_view_list_free(&provenance);
         aggregated_record_free(&record);
         occurrence_match_list_free(&occurrences);
         route_occurrence_matches_free(&matches);
@@ -1375,6 +1395,7 @@ static int emit_best_mixed_route(const Ledger *ledger,
       }
       putchar('}');
 
+      provenance_view_list_free(&provenance);
       aggregated_record_free(&record);
       occurrence_match_list_free(&occurrences);
     }
@@ -1989,6 +2010,39 @@ static int collect_occurrence_provenance(
 fail:
   provenance_view_list_free(list);
   return -1;
+}
+
+static int emit_provenance_list(const Ledger *ledger,
+                                const ProvenanceViewList *list) {
+  const char *end = (const char *)ledger->occurrence;
+  size_t i;
+
+  putchar('[');
+
+  for (i = 0; i < list->n; i++) {
+    const ProvenanceRecordHeader *provenance = list->v[i].provenance;
+    const char *p = (const char *)(provenance + 1);
+    uint32_t j;
+
+    if (i != 0)
+      putchar(',');
+
+    putchar('{');
+
+    for (j = 0; j < provenance->nfields; j++) {
+      if (j != 0)
+        putchar(',');
+
+      p = print_ledger_field_json(p, end);
+      if (p == NULL)
+        return -1;
+    }
+
+    putchar('}');
+  }
+
+  putchar(']');
+  return ferror(stdout) ? -1 : 0;
 }
 
 static int emit_aggregated_record_fields(const AggregatedRecord *record) {
