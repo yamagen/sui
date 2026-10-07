@@ -1189,6 +1189,38 @@ static int emit_mixed_route(const Ledger *ledger,
     return 0;
   }
 
+  if (best_mode) {
+    OccurrenceMatchList *matches;
+    size_t r;
+
+    matches = calloc(runs.n, sizeof *matches);
+    if (matches == NULL) {
+      route_run_list_free(&runs);
+      return -1;
+    }
+
+    for (r = 0; r < runs.n; r++) {
+      const RouteRun *run = &runs.v[r];
+
+      if (route->v[run->first].surface > ledger->null_surface)
+        continue;
+
+      if (collect_ledger_run_matches(ledger, route, run, &matches[r]) != 0) {
+        size_t i;
+
+        for (i = 0; i < r; i++)
+          occurrence_match_list_free(&matches[i]);
+        free(matches);
+        route_run_list_free(&runs);
+        return -1;
+      }
+    }
+
+    for (r = 0; r < runs.n; r++)
+      occurrence_match_list_free(&matches[r]);
+    free(matches);
+  }
+
   ledger_first = calloc(runs.n, sizeof *ledger_first);
   if (ledger_first == NULL) {
     route_run_list_free(&runs);
