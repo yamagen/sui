@@ -3166,25 +3166,127 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       char *accepted_text = NULL;
       uint32_t accepted_surface = ledger->null_surface;
       size_t candy_start = target_end;
-      size_t candy_end = candy_approved_advance(
-          ledger, input, target_end, &accepted_text, &accepted_surface);
+      size_t candy_end;
 
-      if (candy_end > target_end) {
-        if (accepted_surface > ledger->null_surface &&
-            selected_route_add(&accepted, candy_start, candy_end,
-                               accepted_surface) != 0) {
-          free(accepted_text);
+      if (best) {
+        CandyCandidateList candidates;
+        SelectedRoute best_route;
+        RouteEvaluation best_evaluation;
+        size_t best_end = target_end;
+        int have_best = 0;
+        size_t ci;
+
+        candy_candidate_list_init(&candidates);
+        selected_route_init(&best_route);
+
+        if (candy_approved_candidates(ledger, input, target_end,
+                                      &candidates) != 0) {
+          candy_candidate_list_free(&candidates);
+          selected_route_free(&best_route);
           selected_route_free(&accepted);
           longest_path_list_free(&paths);
           lattice_free(&lat);
           free_sui_input(&parsed);
           return -1;
         }
-        target_end = candy_end;
-        target_end = resume_from_confirmed_surface(
-            ledger, input, &lat, target_end, accepted_text, &accepted, best);
+
+        for (ci = 0; ci < candidates.n; ci++) {
+          SelectedRoute candidate_route;
+          RouteEvaluation evaluation;
+          size_t candidate_end;
+          size_t j;
+
+          selected_route_init(&candidate_route);
+          for (j = 0; j < accepted.n; j++)
+            if (selected_route_add(&candidate_route,
+                                   accepted.v[j].start,
+                                   accepted.v[j].end,
+                                   accepted.v[j].surface) != 0) {
+              selected_route_free(&candidate_route);
+              candy_candidate_list_free(&candidates);
+              selected_route_free(&best_route);
+              selected_route_free(&accepted);
+              longest_path_list_free(&paths);
+              lattice_free(&lat);
+              free_sui_input(&parsed);
+              return -1;
+            }
+
+          if (selected_route_add(&candidate_route, candy_start,
+                                 candidates.v[ci].end,
+                                 candidates.v[ci].surface) != 0) {
+            selected_route_free(&candidate_route);
+            candy_candidate_list_free(&candidates);
+            selected_route_free(&best_route);
+            selected_route_free(&accepted);
+            longest_path_list_free(&paths);
+            lattice_free(&lat);
+            free_sui_input(&parsed);
+            return -1;
+          }
+
+          candidate_end = resume_from_confirmed_surface(
+              ledger, input, &lat, candidates.v[ci].end,
+              candidates.v[ci].text, &candidate_route, 1);
+
+          if (evaluate_selected_route(ledger, &candidate_route,
+                                      &evaluation) != 0) {
+            selected_route_free(&candidate_route);
+            candy_candidate_list_free(&candidates);
+            selected_route_free(&best_route);
+            selected_route_free(&accepted);
+            longest_path_list_free(&paths);
+            lattice_free(&lat);
+            free_sui_input(&parsed);
+            return -1;
+          }
+
+          if (!have_best || candidate_end > best_end ||
+              (candidate_end == best_end &&
+               route_evaluation_compare(&evaluation,
+                                        &best_evaluation) < 0)) {
+            selected_route_free(&best_route);
+            best_route = candidate_route;
+            selected_route_init(&candidate_route);
+            best_end = candidate_end;
+            best_evaluation = evaluation;
+            have_best = 1;
+          }
+
+          selected_route_free(&candidate_route);
+        }
+
+        if (have_best) {
+          selected_route_free(&accepted);
+          accepted = best_route;
+          selected_route_init(&best_route);
+          target_end = best_end;
+        }
+
+        selected_route_free(&best_route);
+        candy_candidate_list_free(&candidates);
+        candy_end = target_end;
+      } else {
+        candy_end = candy_approved_advance(
+            ledger, input, target_end, &accepted_text, &accepted_surface);
+
+        if (candy_end > target_end) {
+          if (accepted_surface > ledger->null_surface &&
+              selected_route_add(&accepted, candy_start, candy_end,
+                                 accepted_surface) != 0) {
+            free(accepted_text);
+            selected_route_free(&accepted);
+            longest_path_list_free(&paths);
+            lattice_free(&lat);
+            free_sui_input(&parsed);
+            return -1;
+          }
+          target_end = candy_end;
+          target_end = resume_from_confirmed_surface(
+              ledger, input, &lat, target_end, accepted_text, &accepted, 0);
+        }
+        free(accepted_text);
       }
-      free(accepted_text);
 
       for (;;) {
         size_t ignored_end = ignored_advance(config, input, target_end);
