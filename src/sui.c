@@ -3968,6 +3968,7 @@ static int candy_candidate_list_add(CandyCandidateList *list, size_t end,
 
 static int candy_approved_candidates(const Ledger *ledger,
                                      const char *input, size_t target_end,
+                                     int allow_unanchored,
                                      CandyCandidateList *list) {
   const char *base;
   size_t offset = 0;
@@ -3999,13 +4000,20 @@ static int candy_approved_candidates(const Ledger *ledger,
       text = parse_candy_text(copy);
     free(copy);
 
-    if (text != NULL && previous != NULL) {
-      size_t previous_len = strlen(previous);
+    if (text != NULL) {
       size_t text_len = strlen(text);
+      int anchored = 0;
 
-      if (previous_len <= target_end &&
-          memcmp(input + target_end - previous_len, previous,
-                 previous_len) == 0 &&
+      if (previous != NULL) {
+        size_t previous_len = strlen(previous);
+
+        anchored =
+            previous_len <= target_end &&
+            memcmp(input + target_end - previous_len, previous,
+                   previous_len) == 0;
+      }
+
+      if ((allow_unanchored || anchored) &&
           memcmp(input + target_end, text, text_len) == 0 &&
           candy_candidate_list_add(
               list, target_end + text_len, text,
@@ -4041,7 +4049,8 @@ static size_t candy_approved_advance(const Ledger *ledger,
     *accepted_surface = ledger->null_surface;
 
   candy_candidate_list_init(&candidates);
-  if (candy_approved_candidates(ledger, input, target_end, &candidates) != 0) {
+  if (candy_approved_candidates(ledger, input, target_end,
+                                target_end == 0, &candidates) != 0) {
     candy_candidate_list_free(&candidates);
     return target_end;
   }
@@ -4313,7 +4322,7 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
         selected_route_init(&best_route);
 
         if (candy_approved_candidates(ledger, input, target_end,
-                                      &candidates) != 0) {
+                                      target_end == 0, &candidates) != 0) {
           candy_candidate_list_free(&candidates);
           selected_route_free(&best_route);
           selected_route_free(&accepted);
