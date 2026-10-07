@@ -498,6 +498,9 @@ static size_t resume_from_root_paths(
   return best_end;
 }
 
+static int longest_path_set_route(LongestPath *path,
+                                  const SelectedRoute *route);
+
 static int find_longest_midroute(
     const Ledger *ledger, const char *input, const Lattice *lat,
     size_t start, uint32_t surface, uint32_t node, LongestPath *best,
@@ -541,9 +544,6 @@ static int find_longest_midroute(
   route->n--;
   return 0;
 }
-
-static int longest_path_set_route(LongestPath *path,
-                                  const SelectedRoute *route);
 
 static size_t resume_from_midroute(
     const Ledger *ledger, const char *input, const Lattice *lat,
