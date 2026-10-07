@@ -75,7 +75,8 @@ candy=$(mktemp)
 candy_config=$(mktemp)
 transfer_dir=$(mktemp -d)
 surface_dir=$(mktemp -d)
-trap 'rm -f "$candy" "$candy_config"; rm -rf "$transfer_dir" "$surface_dir"' EXIT
+soft_dir=$(mktemp -d)
+trap 'rm -f "$candy" "$candy_config"; rm -rf "$transfer_dir" "$surface_dir" "$soft_dir"' EXIT
 jq --arg filename "$candy" '
   .schema += {
     "word": "string",
@@ -157,6 +158,63 @@ jq -e '
          all(.records[]; has("text") | not))
 ' >/dev/null ||
   fail "approved candy bridges ledger runs"
+
+cat >"$soft_dir/config.json" <<EOF
+{
+  "version": "1.0",
+  "filename": "config.json",
+  "ledger": {"sequence": "id", "trie": "word"},
+  "schema": {
+    "id": "integer",
+    "word": "string",
+    "lemma": "string",
+    "kana": "string",
+    "gloss": "string",
+    "pos": "string"
+  },
+  "provenance": [],
+  "candy": {"filename": "$soft_dir/candy.jsonl"}
+}
+EOF
+
+cat >"$soft_dir/input.jsonl" <<'EOF'
+{"id":1,"word":"櫻","lemma":"桜","kana":"さくら","gloss":"cherry-blossom","pos":"N"}
+EOF
+
+: >"$soft_dir/candy.jsonl"
+
+(
+  cd "$soft_dir"
+  "$OLDPWD/mkledger" -c config.json input.jsonl >/dev/null
+)
+
+printf '%s\n' '桜' |
+  "$SUI" -a -c "$soft_dir/config.json" "$soft_dir/ledger.dat" >/dev/null
+
+soft_line=$(cat "$soft_dir/candy.jsonl")
+case "$soft_line" in
+  '!'{*) ;;
+  *) fail "soft candy marker" ;;
+esac
+printf '%s\n' "${soft_line#!}" |
+jq -e '
+  select(.start == 0 and .end == 3 and .text == "桜" and
+         .word == "桜" and .lemma == "桜" and .kana == "さくら" and
+         .gloss == "cherry-blossom" and .pos == "N")
+' >/dev/null ||
+  fail "ledger-backed soft candy candidate"
+
+sed -i 's/^!//' "$soft_dir/candy.jsonl"
+soft_approved=$(printf '%s\n' '桜' |
+  "$SUI" -b -c "$soft_dir/config.json" "$soft_dir/ledger.dat")
+printf '%s\n' "$soft_approved" |
+jq -e '
+  select(.start == 0 and .end == 3 and
+         (.records | length) == 1 and
+         .records[0].word == "桜" and
+         .records[0].lemma == "桜")
+' >/dev/null ||
+  fail "approved soft candy becomes runtime surface"
 
 cat >"$transfer_dir/config.json" <<EOF
 {
