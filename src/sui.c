@@ -423,6 +423,81 @@ static void candy_candidate_list_init(CandyCandidateList *list);
 static void candy_candidate_list_free(CandyCandidateList *list);
 static int candy_candidate_list_add(CandyCandidateList *list, size_t end,
                                     const char *text, uint32_t surface);
+static size_t resume_from_root_paths(
+    const Ledger *ledger, const LongestPathList *paths, size_t target_end,
+    SelectedRoute *accepted, int best_mode) {
+  const LongestPath *path;
+  const LongestPath *best_path = NULL;
+  size_t best_end = target_end;
+  RouteEvaluation best_evaluation = {0};
+  int have_evaluation = 0;
+
+  for (path = paths->v; path < paths->v + paths->n; path++) {
+    SelectedRoute candidate;
+    RouteEvaluation evaluation;
+    size_t i;
+
+    if (path->start != target_end || path->end <= target_end)
+      continue;
+    if (path->end < best_end)
+      continue;
+    if (!best_mode && path->end == best_end && best_path != NULL)
+      continue;
+
+    if (!best_mode) {
+      best_path = path;
+      best_end = path->end;
+      continue;
+    }
+
+    selected_route_init(&candidate);
+
+    for (i = 0; i < accepted->n; i++)
+      if (selected_route_add(&candidate, accepted->v[i].start,
+                             accepted->v[i].end,
+                             accepted->v[i].surface) != 0) {
+        selected_route_free(&candidate);
+        return target_end;
+      }
+
+    for (i = 0; i < path->route_n; i++)
+      if (selected_route_add(&candidate, path->route[i].start,
+                             path->route[i].end,
+                             path->route[i].surface) != 0) {
+        selected_route_free(&candidate);
+        return target_end;
+      }
+
+    if (evaluate_selected_route(ledger, &candidate, &evaluation) != 0) {
+      selected_route_free(&candidate);
+      return target_end;
+    }
+
+    selected_route_free(&candidate);
+
+    if (path->end > best_end || !have_evaluation ||
+        (path->end == best_end &&
+         route_evaluation_compare(&evaluation, &best_evaluation) < 0)) {
+      best_path = path;
+      best_end = path->end;
+      best_evaluation = evaluation;
+      have_evaluation = 1;
+    }
+  }
+
+  if (best_path != NULL) {
+    size_t i;
+
+    for (i = 0; i < best_path->route_n; i++)
+      if (selected_route_add(accepted, best_path->route[i].start,
+                             best_path->route[i].end,
+                             best_path->route[i].surface) != 0)
+        return target_end;
+  }
+
+  return best_end;
+}
+
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy,
                          int best);
@@ -4024,6 +4099,9 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           break;
         target_end = ignored_end;
       }
+
+      target_end = resume_from_root_paths(
+          ledger, &paths, target_end, &accepted, best);
 
       if (target_end <= previous_end)
         break;
