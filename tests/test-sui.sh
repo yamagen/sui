@@ -74,7 +74,8 @@ printf '%s\n' "${context#!}" |
 candy=$(mktemp)
 candy_config=$(mktemp)
 transfer_dir=$(mktemp -d)
-trap 'rm -f "$candy" "$candy_config"; rm -rf "$transfer_dir"' EXIT
+surface_dir=$(mktemp -d)
+trap 'rm -f "$candy" "$candy_config"; rm -rf "$transfer_dir" "$surface_dir"' EXIT
 jq --arg filename "$candy" '
   .schema += {
     "word": "string",
@@ -203,5 +204,50 @@ jq -e '
          [.records[].word] == ["A", "BC"])
 ' >/dev/null ||
   fail "best prefers fewer transfers"
+
+cat >"$surface_dir/config.json" <<EOF
+{
+  "version": "1.0",
+  "filename": "config.json",
+  "ledger": {"sequence": "id", "trie": "word"},
+  "schema": {"id": "integer", "word": "string"},
+  "provenance": [],
+  "candy": {"filename": "$surface_dir/candy.jsonl"}
+}
+EOF
+
+cat >"$surface_dir/input.jsonl" <<'EOF'
+{"id":1,"word":"A"}
+EOF
+
+cat >"$surface_dir/candy.jsonl" <<'EOF'
+{"text":"A","word":"A"}
+{"text":"B","word":"B"}
+{"text":"A","word":"A"}
+{"text":"BC","word":"BC"}
+EOF
+
+(
+  cd "$surface_dir"
+  "$OLDPWD/mkledger" -c config.json input.jsonl >/dev/null
+)
+
+surface_plain=$(printf '%s\n' 'ABC' |
+  "$SUI" -c "$surface_dir/config.json" "$surface_dir/ledger.dat")
+printf '%s\n' "$surface_plain" |
+jq -e '
+  select(.start == 0 and .end == 2 and
+         [.records[].word] == ["A", "B"])
+' >/dev/null ||
+  fail "plain longer-surface candidate order"
+
+surface_best=$(printf '%s\n' 'ABC' |
+  "$SUI" -b -c "$surface_dir/config.json" "$surface_dir/ledger.dat")
+printf '%s\n' "$surface_best" |
+jq -e '
+  select(.start == 0 and .end == 3 and
+         [.records[].word] == ["A", "BC"])
+' >/dev/null ||
+  fail "best prefers longer surface after transfer tie"
 
 echo "PASS: sui regression tests"
