@@ -346,6 +346,8 @@ static int emit_mixed_route(const Ledger *ledger,
                             int best_mode);
 static int emit_occurrence(const Ledger *ledger,
                            const OccurrenceRecord *occurrence);
+static const char *print_ledger_field_json(const char *p,
+                                           const char *end);
 static int occurrence_combine_fields(
     const Ledger *ledger, const OccurrenceRecord *occurrence,
     const CombineRecordHeader **combine_out, const char **fields_out);
