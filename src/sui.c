@@ -2833,21 +2833,15 @@ static int candy_candidate_list_add(CandyCandidateList *list, size_t end,
   return 0;
 }
 
-static size_t candy_approved_advance(const Ledger *ledger,
+static int candy_approved_candidates(const Ledger *ledger,
                                      const char *input, size_t target_end,
-                                     char **accepted_text,
-                                     uint32_t *accepted_surface) {
+                                     CandyCandidateList *list) {
   const char *base;
   size_t offset = 0;
   char *previous = NULL;
 
-  if (accepted_text != NULL)
-    *accepted_text = NULL;
-  if (accepted_surface != NULL)
-    *accepted_surface = ledger->null_surface;
-
   if (ledger->candy_map == NULL || ledger->candy_size == 0)
-    return target_end;
+    return 0;
 
   base = (const char *)ledger->candy_map;
 
@@ -2865,7 +2859,7 @@ static size_t candy_approved_advance(const Ledger *ledger,
     copy = strndup(line, line_len);
     if (copy == NULL) {
       free(previous);
-      return target_end;
+      return -1;
     }
 
     if (copy[0] != '!')
@@ -2879,14 +2873,13 @@ static size_t candy_approved_advance(const Ledger *ledger,
       if (previous_len <= target_end &&
           memcmp(input + target_end - previous_len, previous,
                  previous_len) == 0 &&
-          memcmp(input + target_end, text, text_len) == 0) {
-        if (accepted_text != NULL)
-          *accepted_text = strdup(text);
-        if (accepted_surface != NULL)
-          *accepted_surface = runtime_surface_at_offset(ledger, offset);
+          memcmp(input + target_end, text, text_len) == 0 &&
+          candy_candidate_list_add(
+              list, target_end + text_len, text,
+              runtime_surface_at_offset(ledger, offset)) != 0) {
         free(previous);
         free(text);
-        return target_end + text_len;
+        return -1;
       }
     }
 
@@ -2899,7 +2892,37 @@ static size_t candy_approved_advance(const Ledger *ledger,
   }
 
   free(previous);
-  return target_end;
+  return 0;
+}
+
+static size_t candy_approved_advance(const Ledger *ledger,
+                                     const char *input, size_t target_end,
+                                     char **accepted_text,
+                                     uint32_t *accepted_surface) {
+  CandyCandidateList candidates;
+  size_t result = target_end;
+
+  if (accepted_text != NULL)
+    *accepted_text = NULL;
+  if (accepted_surface != NULL)
+    *accepted_surface = ledger->null_surface;
+
+  candy_candidate_list_init(&candidates);
+  if (candy_approved_candidates(ledger, input, target_end, &candidates) != 0) {
+    candy_candidate_list_free(&candidates);
+    return target_end;
+  }
+
+  if (candidates.n != 0) {
+    result = candidates.v[0].end;
+    if (accepted_text != NULL)
+      *accepted_text = strdup(candidates.v[0].text);
+    if (accepted_surface != NULL)
+      *accepted_surface = candidates.v[0].surface;
+  }
+
+  candy_candidate_list_free(&candidates);
+  return result;
 }
 
 static size_t resume_from_confirmed_surface(
