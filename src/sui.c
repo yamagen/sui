@@ -240,6 +240,10 @@ static int collect_route_occurrence_matches(const Ledger *ledger,
                                             const SelectedRoute *route,
                                             const RouteRunList *runs,
                                             RouteOccurrenceMatches *matches);
+static int collect_route_position_occurrences(
+    const Ledger *ledger, const SelectedRoute *route,
+    const RouteRunList *runs, const RouteOccurrenceMatches *matches,
+    size_t route_index, OccurrenceMatchList *occurrences);
 static int evaluate_selected_route(const Ledger *ledger,
                                    const SelectedRoute *route,
                                    RouteEvaluation *evaluation);
@@ -998,6 +1002,47 @@ static int collect_route_occurrence_matches(const Ledger *ledger,
   return 0;
 }
 
+static int collect_route_position_occurrences(
+    const Ledger *ledger, const SelectedRoute *route,
+    const RouteRunList *runs, const RouteOccurrenceMatches *matches,
+    size_t route_index, OccurrenceMatchList *occurrences) {
+  size_t r;
+
+  occurrence_match_list_init(occurrences);
+
+  if (route_index >= route->n)
+    return -1;
+
+  if (route->v[route_index].surface > ledger->null_surface)
+    return 0;
+
+  for (r = 0; r < runs->n; r++) {
+    const RouteRun *run = &runs->v[r];
+    size_t j;
+    size_t m;
+
+    if (route_index < run->first || route_index >= run->first + run->count)
+      continue;
+
+    if (r >= matches->n)
+      return -1;
+
+    j = route_index - run->first;
+
+    for (m = 0; m < matches->v[r].n; m++) {
+      if (occurrence_match_list_add(
+              occurrences, matches->v[r].v[m] + j) != 0) {
+        occurrence_match_list_free(occurrences);
+        return -1;
+      }
+    }
+
+    return 0;
+  }
+
+  return -1;
+}
+
 static size_t runtime_surface_offset(const Ledger *ledger, uint32_t surface) {
   size_t index;
 
@@ -1247,6 +1292,23 @@ static int emit_mixed_route(const Ledger *ledger,
     if (collect_route_occurrence_matches(ledger, route, &runs, &matches) != 0) {
       route_run_list_free(&runs);
       return -1;
+    }
+
+    {
+      size_t i;
+
+      for (i = 0; i < route->n; i++) {
+        OccurrenceMatchList occurrences;
+
+        if (collect_route_position_occurrences(
+                ledger, route, &runs, &matches, i, &occurrences) != 0) {
+          route_occurrence_matches_free(&matches);
+          route_run_list_free(&runs);
+          return -1;
+        }
+
+        occurrence_match_list_free(&occurrences);
+      }
     }
 
     route_occurrence_matches_free(&matches);
