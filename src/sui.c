@@ -4726,7 +4726,27 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
             return -1;
           }
 
-          status = emit_unresolved(fp, config, &parsed, target_end, input_end);
+          status = 0;
+          if (accepted.n != 0) {
+            const LatticeEdge *anchor = &accepted.v[accepted.n - 1];
+            const char *anchor_surface =
+                anchor->surface > ledger->null_surface
+                    ? runtime_surface_string(ledger, anchor->surface)
+                    : surface_string(ledger, anchor->surface);
+
+            if (anchor_surface == NULL ||
+                emit_adjacency_work_row(fp, config, &parsed, anchor,
+                                        anchor_surface) != 0)
+              status = -1;
+
+            if (anchor->surface > ledger->null_surface)
+              free((char *)anchor_surface);
+          }
+
+          if (status == 0 &&
+              emit_unresolved(fp, config, &parsed, target_end, input_end) != 0)
+            status = -1;
+
           if (fclose(fp) != 0)
             status = -1;
 
