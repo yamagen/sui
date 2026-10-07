@@ -948,6 +948,37 @@ static int route_run_list_add(RouteRunList *runs, size_t first,
   return 0;
 }
 
+static int ledger_route_span_attested(const Ledger *ledger,
+                                      const SelectedRoute *route,
+                                      size_t first, size_t count) {
+  const OccurrenceRecord *candidate;
+  const OccurrenceRecord *limit =
+      ledger->occurrencev + ledger->occurrence->noccurrences;
+
+  if (count == 0 || first + count > route->n)
+    return 0;
+
+  for (candidate = ledger->occurrencev; candidate < limit; candidate++) {
+    size_t i;
+
+    for (i = 0; i < count; i++) {
+      const OccurrenceRecord *occurrence = candidate + i;
+
+      if (occurrence >= limit)
+        break;
+      if (i != 0 && occurrence->sequence != candidate->sequence)
+        break;
+      if (occurrence->surface != route->v[first + i].surface)
+        break;
+    }
+
+    if (i == count)
+      return 1;
+  }
+
+  return 0;
+}
+
 static int split_selected_route(const Ledger *ledger,
                                 const SelectedRoute *route,
                                 RouteRunList *runs) {
@@ -962,9 +993,17 @@ static int split_selected_route(const Ledger *ledger,
     bool runtime = route->v[first].surface > ledger->null_surface;
     size_t end = first + 1;
 
-    while (end < route->n &&
-           (route->v[end].surface > ledger->null_surface) == runtime)
-      end++;
+    if (runtime) {
+      while (end < route->n &&
+             route->v[end].surface > ledger->null_surface)
+        end++;
+    } else {
+      while (end < route->n &&
+             route->v[end].surface <= ledger->null_surface &&
+             ledger_route_span_attested(ledger, route, first,
+                                        end - first + 1))
+        end++;
+    }
 
     if (route_run_list_add(runs, first, end - first) != 0)
       return -1;
