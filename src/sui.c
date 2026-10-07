@@ -498,10 +498,55 @@ static size_t resume_from_root_paths(
   return best_end;
 }
 
+static int find_longest_midroute(
+    const Ledger *ledger, const char *input, const Lattice *lat,
+    size_t start, uint32_t surface, uint32_t node, LongestPath *best,
+    SelectedRoute *route) {
+  LatticeEdge first;
+  size_t i;
+
+  first.start = start;
+  first.end = start + strlen(surface_string(ledger, surface));
+  first.surface = surface;
+
+  if (selected_route_add(route, first.start, first.end, first.surface) != 0)
+    return -1;
+
+  best->start = first.start;
+  best->end = first.end;
+  best->depth = 1;
+  best->freq = ledger->trie[node].freq;
+  best->surface = surface;
+  if (longest_path_set_route(best, route) != 0) {
+    route->n--;
+    return -1;
+  }
+
+  for (i = 0; i < lat->n; i++) {
+    uint32_t child;
+
+    if (!lattice_edges_connect(input, &first, &lat->v[i]))
+      continue;
+
+    child = trie_find(ledger, node, lat->v[i].surface);
+    if (child == TRIE_NONE)
+      continue;
+
+    if (find_longest_from(ledger, input, lat, i, child, 2, best, route) != 0) {
+      route->n--;
+      return -1;
+    }
+  }
+
+  route->n--;
+  return 0;
+}
+
 static size_t resume_from_midroute(
     const Ledger *ledger, const char *input, const Lattice *lat,
     size_t target_end, SelectedRoute *accepted, int best_mode) {
-  size_t edge_index;
+  uint32_t surface;
+  size_t input_len = strlen(input);
   size_t best_end = target_end;
   SelectedRoute best_route;
   RouteEvaluation best_evaluation = {0};
@@ -509,12 +554,13 @@ static size_t resume_from_midroute(
 
   selected_route_init(&best_route);
 
-  for (edge_index = 0; edge_index < lat->n; edge_index++) {
+  for (surface = 0; surface < ledger->header->unique_surfaces; surface++) {
+    const char *text = surface_string(ledger, surface);
+    size_t len = strlen(text);
     uint32_t node;
 
-    if (lat->v[edge_index].start != target_end)
-      continue;
-    if (lat->v[edge_index].surface >= ledger->header->unique_surfaces)
+    if (len == 0 || target_end + len > input_len ||
+        memcmp(input + target_end, text, len) != 0)
       continue;
 
     for (node = 1; node < ledger->header->trie_nodes; node++) {
@@ -524,20 +570,20 @@ static size_t resume_from_midroute(
       RouteEvaluation evaluation;
       size_t i;
 
-      if (ledger->trie[node].token != lat->v[edge_index].surface)
+      if (ledger->trie[node].token != surface)
         continue;
 
-      path.start = lat->v[edge_index].start;
-      path.end = lat->v[edge_index].end;
-      path.depth = 1;
-      path.freq = ledger->trie[node].freq;
-      path.surface = lat->v[edge_index].surface;
+      path.start = target_end;
+      path.end = target_end;
+      path.depth = 0;
+      path.freq = 0;
+      path.surface = surface;
       path.route = NULL;
       path.route_n = 0;
       selected_route_init(&route);
 
-      if (find_longest_from(ledger, input, lat, edge_index, node, 1,
-                            &path, &route) != 0) {
+      if (find_longest_midroute(ledger, input, lat, target_end, surface,
+                                node, &path, &route) != 0) {
         selected_route_free(&route);
         free(path.route);
         selected_route_free(&best_route);
