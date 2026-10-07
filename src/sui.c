@@ -546,6 +546,129 @@ static int find_longest_midroute(
   return 0;
 }
 
+static size_t resume_from_soft_candy_source(
+    const Ledger *ledger, const MkledgerConfig *config, const char *input,
+    size_t target_end, const char *runtime_text, SelectedRoute *accepted) {
+  const char *p;
+  const char *end;
+  size_t input_len = strlen(input);
+  size_t best_end = target_end;
+  SelectedRoute best_route;
+  uint32_t combine_index;
+
+  if (config == NULL || config->ledger.trie == NULL ||
+      runtime_text == NULL || runtime_text[0] == '\0')
+    return target_end;
+
+  selected_route_init(&best_route);
+  p = (const char *)(ledger->combine + 1);
+  end = (const char *)ledger->occurrence;
+
+  for (combine_index = 0; combine_index < ledger->combine->ncombines;
+       combine_index++) {
+    const CombineRecordHeader *combine;
+    const char *q;
+    int source_match = 0;
+    uint32_t j;
+
+    if ((size_t)(end - p) < sizeof *combine)
+      break;
+    combine = (const CombineRecordHeader *)p;
+    p += sizeof *combine;
+    q = p;
+
+    for (j = 0; j < combine->nfields; j++) {
+      LedgerFieldView view;
+      const char *next = ledger_field_view(q, end, &view);
+
+      if (next == NULL)
+        goto done;
+      if (view.type == 0 &&
+          strcmp(view.name, config->ledger.trie) != 0 &&
+          strcmp(view.value, runtime_text) == 0)
+        source_match = 1;
+      q = next;
+    }
+    p = q;
+
+    for (j = 0; j < combine->nprovenance; j++) {
+      const ProvenanceRecordHeader *provenance;
+      uint32_t k;
+
+      if ((size_t)(end - p) < sizeof *provenance)
+        goto done;
+      provenance = (const ProvenanceRecordHeader *)p;
+      p += sizeof *provenance;
+      for (k = 0; k < provenance->nfields; k++) {
+        p = skip_ledger_field(p, end);
+        if (p == NULL)
+          goto done;
+      }
+    }
+
+    if (source_match) {
+      const OccurrenceRecord *occurrence;
+      const OccurrenceRecord *occ_end =
+          ledger->occurrencev + ledger->occurrence->noccurrences;
+
+      for (occurrence = ledger->occurrencev; occurrence < occ_end;
+           occurrence++) {
+        const OccurrenceRecord *next;
+        size_t pos = target_end;
+        SelectedRoute route;
+
+        if (occurrence->combine != combine_index)
+          continue;
+
+        selected_route_init(&route);
+        next = occurrence + 1;
+
+        while (next < occ_end && next->sequence == occurrence->sequence) {
+          const char *surface = surface_string(ledger, next->surface);
+          size_t len;
+
+          if (surface == NULL)
+            break;
+          len = strlen(surface);
+          if (len == 0 || pos + len > input_len ||
+              memcmp(input + pos, surface, len) != 0)
+            break;
+          if (selected_route_add(&route, pos, pos + len, next->surface) != 0) {
+            selected_route_free(&route);
+            goto done;
+          }
+          pos += len;
+          next++;
+        }
+
+        if (pos > best_end) {
+          selected_route_free(&best_route);
+          best_route = route;
+          selected_route_init(&route);
+          best_end = pos;
+        }
+        selected_route_free(&route);
+      }
+    }
+  }
+
+done:
+  if (best_end > target_end) {
+    size_t i;
+
+    for (i = 0; i < best_route.n; i++)
+      if (selected_route_add(accepted, best_route.v[i].start,
+                             best_route.v[i].end,
+                             best_route.v[i].surface) != 0) {
+        selected_route_free(&best_route);
+        return target_end;
+      }
+  }
+
+  selected_route_free(&best_route);
+  return best_end;
+}
+
 static size_t resume_from_midroute(
     const Ledger *ledger, const char *input, const Lattice *lat,
     size_t target_end, SelectedRoute *accepted, int best_mode) {
@@ -4399,6 +4522,10 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           candidate_end = resume_from_confirmed_surface(
               ledger, input, &lat, candidates.v[ci].end,
               candidates.v[ci].text, &candidate_route, 1);
+          if (candidate_end == candidates.v[ci].end)
+            candidate_end = resume_from_soft_candy_source(
+                ledger, config, input, candidate_end,
+                candidates.v[ci].text, &candidate_route);
 
           if (evaluate_selected_route(ledger, &candidate_route,
                                       &evaluation) != 0) {
@@ -4455,6 +4582,9 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           target_end = candy_end;
           target_end = resume_from_confirmed_surface(
               ledger, input, &lat, target_end, accepted_text, &accepted, 0);
+          if (target_end == candy_end)
+            target_end = resume_from_soft_candy_source(
+                ledger, config, input, target_end, accepted_text, &accepted);
         }
         free(accepted_text);
       }
