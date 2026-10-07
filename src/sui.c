@@ -710,6 +710,18 @@ static int append_soft_candy_candidates(const Ledger *ledger,
       config->ledger.trie == NULL || input->text[start] == '\0')
     return 0;
 
+  {
+    uint32_t surface;
+
+    for (surface = 0; surface < ledger->header->unique_surfaces; surface++) {
+      const char *known = surface_string(ledger, surface);
+      size_t len = strlen(known);
+
+      if (len != 0 && strncmp(input->text + start, known, len) == 0)
+        return 0;
+    }
+  }
+
   p = (const char *)(ledger->combine + 1);
   end = (const char *)ledger->occurrence;
 
