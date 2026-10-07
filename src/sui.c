@@ -311,6 +311,9 @@ static int emit_mixed_route(const Ledger *ledger,
                             int best_mode);
 static int emit_occurrence(const Ledger *ledger,
                            const OccurrenceRecord *occurrence);
+static int occurrence_combine_fields(
+    const Ledger *ledger, const OccurrenceRecord *occurrence,
+    const CombineRecordHeader **combine_out, const char **fields_out);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -1729,6 +1732,61 @@ static const char *show_ledger_field(const char *p, const char *end,
 
   printf("%s%s: %s\n", indent, name, value);
   return p;
+}
+
+static int occurrence_combine_fields(
+    const Ledger *ledger, const OccurrenceRecord *occurrence,
+    const CombineRecordHeader **combine_out, const char **fields_out) {
+  const char *p = (const char *)(ledger->combine + 1);
+  const char *end = (const char *)ledger->occurrence;
+  uint32_t i;
+
+  if (occurrence->combine >= ledger->combine->ncombines)
+    return -1;
+
+  for (i = 0; i < ledger->combine->ncombines; i++) {
+    const CombineRecordHeader *combine;
+    const char *fields;
+    uint32_t j;
+
+    if ((size_t)(end - p) < sizeof *combine)
+      return -1;
+
+    combine = (const CombineRecordHeader *)p;
+    p += sizeof *combine;
+    fields = p;
+
+    for (j = 0; j < combine->nfields; j++) {
+      p = skip_ledger_field(p, end);
+      if (p == NULL)
+        return -1;
+    }
+
+    if (i == occurrence->combine) {
+      *combine_out = combine;
+      *fields_out = fields;
+      return 0;
+    }
+
+    for (j = 0; j < combine->nprovenance; j++) {
+      const ProvenanceRecordHeader *provenance;
+      uint32_t k;
+
+      if ((size_t)(end - p) < sizeof *provenance)
+        return -1;
+
+      provenance = (const ProvenanceRecordHeader *)p;
+      p += sizeof *provenance;
+
+      for (k = 0; k < provenance->nfields; k++) {
+        p = skip_ledger_field(p, end);
+        if (p == NULL)
+          return -1;
+      }
+    }
+  }
+
+  return -1;
 }
 
 static int emit_occurrence(const Ledger *ledger,
