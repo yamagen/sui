@@ -351,6 +351,7 @@ static const char *print_ledger_field_json(const char *p,
 static int occurrence_combine_fields(
     const Ledger *ledger, const OccurrenceRecord *occurrence,
     const CombineRecordHeader **combine_out, const char **fields_out);
+static const char *skip_ledger_field(const char *p, const char *end);
 static const char *ledger_field_view(const char *p, const char *end,
                                      LedgerFieldView *view);
 static void field_value_list_init(FieldValueList *list);
