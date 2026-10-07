@@ -333,6 +333,9 @@ static void field_value_list_init(FieldValueList *list);
 static void field_value_list_free(FieldValueList *list);
 static int field_value_list_add_unique(FieldValueList *list,
                                        const char *value);
+static int collect_occurrence_field_values(
+    const Ledger *ledger, const OccurrenceMatchList *occurrences,
+    const char *field_name, uint32_t field_type, FieldValueList *values);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -1719,6 +1722,49 @@ static int field_value_list_add_unique(FieldValueList *list,
   }
 
   list->v[list->n++] = value;
+  return 0;
+}
+
+static int collect_occurrence_field_values(
+    const Ledger *ledger, const OccurrenceMatchList *occurrences,
+    const char *field_name, uint32_t field_type, FieldValueList *values) {
+  const char *end = (const char *)ledger->occurrence;
+  size_t i;
+
+  field_value_list_init(values);
+
+  for (i = 0; i < occurrences->n; i++) {
+    const CombineRecordHeader *combine;
+    const char *fieldp;
+    uint32_t j;
+
+    if (occurrence_combine_fields(ledger, occurrences->v[i],
+                                  &combine, &fieldp) != 0) {
+      field_value_list_free(values);
+      return -1;
+    }
+
+    for (j = 0; j < combine->nfields; j++) {
+      LedgerFieldView view;
+      const char *next = ledger_field_view(fieldp, end, &view);
+
+      if (next == NULL) {
+        field_value_list_free(values);
+        return -1;
+      }
+
+      if (view.type == field_type && strcmp(view.name, field_name) == 0) {
+        if (field_value_list_add_unique(values, view.value) != 0) {
+          field_value_list_free(values);
+          return -1;
+        }
+        break;
+      }
+
+      fieldp = next;
+    }
+  }
+
   return 0;
 }
 
