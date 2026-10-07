@@ -278,7 +278,8 @@ static size_t runtime_surface_offset(const Ledger *ledger, uint32_t surface);
 static int selected_route_has_runtime(const Ledger *ledger,
                                       const SelectedRoute *route);
 static int emit_mixed_route(const Ledger *ledger,
-                            const SelectedRoute *route, size_t target_end);
+                            const SelectedRoute *route, size_t target_end,
+                            int best_mode);
 static int emit_occurrence(const Ledger *ledger,
                            const OccurrenceRecord *occurrence);
 
@@ -1099,11 +1100,13 @@ static int emit_mixed_route_from(const Ledger *ledger,
 }
 
 static int emit_mixed_route(const Ledger *ledger,
-                            const SelectedRoute *route, size_t target_end) {
+                            const SelectedRoute *route, size_t target_end,
+                            int best_mode) {
   RouteRunList runs;
   const OccurrenceRecord **ledger_first;
   int status;
 
+  (void)best_mode;
   route_run_list_init(&runs);
 
   if (split_selected_route(ledger, route, &runs) != 0) {
@@ -3435,7 +3438,7 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       int emit_status;
 
       if (selected_route_has_runtime(ledger, &accepted))
-        emit_status = emit_mixed_route(ledger, &accepted, target_end);
+        emit_status = emit_mixed_route(ledger, &accepted, target_end, best);
       else
         emit_status = emit_observed_paths(ledger, input, &lat, target_end);
 
