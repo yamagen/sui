@@ -1347,6 +1347,20 @@ static int emit_mixed_route(const Ledger *ledger,
           return -1;
         }
 
+        if (route->v[i].surface <= ledger->null_surface) {
+          AggregatedRecord record;
+
+          if (aggregate_occurrence_record(
+                  ledger, &occurrences, &record) != 0) {
+            occurrence_match_list_free(&occurrences);
+            route_occurrence_matches_free(&matches);
+            route_run_list_free(&runs);
+            return -1;
+          }
+
+          aggregated_record_free(&record);
+        }
+
         occurrence_match_list_free(&occurrences);
       }
     }
