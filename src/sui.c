@@ -3187,7 +3187,7 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       if (best) {
         CandyCandidateList candidates;
         SelectedRoute best_route;
-        RouteEvaluation best_evaluation;
+        RouteEvaluation best_evaluation = {0};
         size_t best_end = target_end;
         int have_best = 0;
         size_t ci;
