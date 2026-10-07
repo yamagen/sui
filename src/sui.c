@@ -4307,8 +4307,24 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       size_t previous_end = target_end;
       char *accepted_text = NULL;
       uint32_t accepted_surface = ledger->null_surface;
-      size_t candy_start = target_end;
+      int crossed_ignore = 0;
+      size_t candy_start;
       size_t candy_end;
+
+      for (;;) {
+        size_t ignored_end = ignored_advance(config, input, target_end);
+
+        if (ignored_end <= target_end)
+          break;
+        target_end = ignored_end;
+        crossed_ignore = 1;
+      }
+
+      if (crossed_ignore)
+        target_end = resume_from_midroute(
+            ledger, input, &lat, target_end, &accepted, best);
+
+      candy_start = target_end;
 
       if (best) {
         CandyCandidateList candidates;
@@ -4322,7 +4338,8 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
         selected_route_init(&best_route);
 
         if (candy_approved_candidates(ledger, input, target_end,
-                                      target_end == 0, &candidates) != 0) {
+                                      target_end == 0 || crossed_ignore,
+                                      &candidates) != 0) {
           candy_candidate_list_free(&candidates);
           selected_route_free(&best_route);
           selected_route_free(&accepted);
@@ -4428,23 +4445,6 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
               ledger, input, &lat, target_end, accepted_text, &accepted, 0);
         }
         free(accepted_text);
-      }
-
-      {
-        int crossed_ignore = 0;
-
-        for (;;) {
-          size_t ignored_end = ignored_advance(config, input, target_end);
-
-          if (ignored_end <= target_end)
-            break;
-          target_end = ignored_end;
-          crossed_ignore = 1;
-        }
-
-        if (crossed_ignore)
-          target_end = resume_from_midroute(
-              ledger, input, &lat, target_end, &accepted, best);
       }
 
       if (target_end <= previous_end)
