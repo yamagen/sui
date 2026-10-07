@@ -542,6 +542,9 @@ static int find_longest_midroute(
   return 0;
 }
 
+static int longest_path_set_route(LongestPath *path,
+                                  const SelectedRoute *route);
+
 static size_t resume_from_midroute(
     const Ledger *ledger, const char *input, const Lattice *lat,
     size_t target_end, SelectedRoute *accepted, int best_mode) {
