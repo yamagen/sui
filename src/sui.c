@@ -93,6 +93,11 @@ typedef struct {
 
 
 typedef struct {
+  OccurrenceMatchList *v;
+  size_t n;
+} RouteOccurrenceMatches;
+
+typedef struct {
   size_t end;
   char *text;
   uint32_t surface;
@@ -230,6 +235,11 @@ static int collect_ledger_run_matches(const Ledger *ledger,
                                       const SelectedRoute *route,
                                       const RouteRun *run,
                                       OccurrenceMatchList *matches);
+static void route_occurrence_matches_free(RouteOccurrenceMatches *matches);
+static int collect_route_occurrence_matches(const Ledger *ledger,
+                                            const SelectedRoute *route,
+                                            const RouteRunList *runs,
+                                            RouteOccurrenceMatches *matches);
 static int evaluate_selected_route(const Ledger *ledger,
                                    const SelectedRoute *route,
                                    RouteEvaluation *evaluation);
@@ -946,6 +956,48 @@ static int collect_ledger_run_matches(const Ledger *ledger,
   return 0;
 }
 
+static void route_occurrence_matches_free(RouteOccurrenceMatches *matches) {
+  size_t i;
+
+  if (matches->v != NULL) {
+    for (i = 0; i < matches->n; i++)
+      occurrence_match_list_free(&matches->v[i]);
+  }
+
+  free(matches->v);
+  matches->v = NULL;
+  matches->n = 0;
+}
+
+static int collect_route_occurrence_matches(const Ledger *ledger,
+                                            const SelectedRoute *route,
+                                            const RouteRunList *runs,
+                                            RouteOccurrenceMatches *matches) {
+  size_t r;
+
+  matches->v = calloc(runs->n, sizeof *matches->v);
+  matches->n = runs->n;
+
+  if (matches->v == NULL && runs->n != 0) {
+    matches->n = 0;
+    return -1;
+  }
+
+  for (r = 0; r < runs->n; r++) {
+    const RouteRun *run = &runs->v[r];
+
+    if (route->v[run->first].surface > ledger->null_surface)
+      continue;
+
+    if (collect_ledger_run_matches(ledger, route, run, &matches->v[r]) != 0) {
+      route_occurrence_matches_free(matches);
+      return -1;
+    }
+  }
+
+  return 0;
+}
+
 static size_t runtime_surface_offset(const Ledger *ledger, uint32_t surface) {
   size_t index;
 
@@ -1190,35 +1242,14 @@ static int emit_mixed_route(const Ledger *ledger,
   }
 
   if (best_mode) {
-    OccurrenceMatchList *matches;
-    size_t r;
+    RouteOccurrenceMatches matches;
 
-    matches = calloc(runs.n, sizeof *matches);
-    if (matches == NULL) {
+    if (collect_route_occurrence_matches(ledger, route, &runs, &matches) != 0) {
       route_run_list_free(&runs);
       return -1;
     }
 
-    for (r = 0; r < runs.n; r++) {
-      const RouteRun *run = &runs.v[r];
-
-      if (route->v[run->first].surface > ledger->null_surface)
-        continue;
-
-      if (collect_ledger_run_matches(ledger, route, run, &matches[r]) != 0) {
-        size_t i;
-
-        for (i = 0; i < r; i++)
-          occurrence_match_list_free(&matches[i]);
-        free(matches);
-        route_run_list_free(&runs);
-        return -1;
-      }
-    }
-
-    for (r = 0; r < runs.n; r++)
-      occurrence_match_list_free(&matches[r]);
-    free(matches);
+    route_occurrence_matches_free(&matches);
   }
 
   ledger_first = calloc(runs.n, sizeof *ledger_first);
