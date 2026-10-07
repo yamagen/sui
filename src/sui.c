@@ -4131,17 +4131,22 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
         free(accepted_text);
       }
 
-      for (;;) {
-        size_t ignored_end = ignored_advance(config, input, target_end);
+      {
+        int crossed_ignore = 0;
 
-        if (ignored_end <= target_end)
-          break;
-        target_end = ignored_end;
+        for (;;) {
+          size_t ignored_end = ignored_advance(config, input, target_end);
+
+          if (ignored_end <= target_end)
+            break;
+          target_end = ignored_end;
+          crossed_ignore = 1;
+        }
+
+        if (crossed_ignore)
+          target_end = resume_from_root_paths(
+              ledger, &paths, target_end, &accepted, best);
       }
-
-      if (selected_route_has_runtime(ledger, &accepted))
-        target_end = resume_from_root_paths(
-            ledger, &paths, target_end, &accepted, best);
 
       if (target_end <= previous_end)
         break;
