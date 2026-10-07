@@ -96,28 +96,28 @@ jq --arg filename "$candy" '
 printf '%s\n' '{"text":"男につきて何か","provenance":{"corpus":"taketori","id":37,"token":5}}' |
   "$SUI" -c "$candy_config" -a "$LEDGER" >/dev/null
 
-candy_line=$(cat "$candy")
-case "$candy_line" in
-  '!'{*) ;;
-  *) fail "candy marker" ;;
-esac
-printf '%s\n' "${candy_line#!}" |
-jq -e '
-  select(.start == 15 and .end == 21 and .text == "何か" and
-         .provenance.corpus == "taketori" and
-         .provenance.id == 37 and
-         .provenance.token == 5 and
-         .word == "" and
-         .lemma == "" and
-         .kana == "" and
-         ."lemma-kana" == "" and
-         .romaji == "" and
-         ."lemma-romaji" == "" and
-         .gloss == "" and
-         .pos == "" and
-         .ku == "")
+candy_lines=$(cat "$candy")
+printf '%s\n' "$candy_lines" |
+sed 's/^!//' |
+jq -s -e '
+  length == 2 and
+  .[0].start == 12 and .[0].end == 15 and .[0].text == "て" and
+  .[0].word == "て" and
+  .[1].start == 15 and .[1].end == 21 and .[1].text == "何か" and
+  .[1].provenance.corpus == "taketori" and
+  .[1].provenance.id == 37 and
+  .[1].provenance.token == 5 and
+  .[1].word == "" and
+  .[1].lemma == "" and
+  .[1].kana == "" and
+  .[1]."lemma-kana" == "" and
+  .[1].romaji == "" and
+  .[1]."lemma-romaji" == "" and
+  .[1].gloss == "" and
+  .[1].pos == "" and
+  .[1].ku == ""
 ' >/dev/null ||
-  fail "candy append"
+  fail "candy append with previous station"
 
 reused=$(printf '%s\n' '男につきて何か' |
   "$SUI" -c "$candy_config" -u "$LEDGER")
