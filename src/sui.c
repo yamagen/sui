@@ -143,6 +143,12 @@ typedef struct {
   uint32_t type;
 } LedgerFieldView;
 
+typedef struct {
+  const char **v;
+  size_t n;
+  size_t cap;
+} FieldValueList;
+
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b);
@@ -323,6 +329,10 @@ static int occurrence_combine_fields(
     const CombineRecordHeader **combine_out, const char **fields_out);
 static const char *ledger_field_view(const char *p, const char *end,
                                      LedgerFieldView *view);
+static void field_value_list_init(FieldValueList *list);
+static void field_value_list_free(FieldValueList *list);
+static int field_value_list_add_unique(FieldValueList *list,
+                                       const char *value);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -1673,6 +1683,43 @@ static void print_json_string(const char *s) {
   }
 
   putchar('"');
+}
+
+static void field_value_list_init(FieldValueList *list) {
+  list->v = NULL;
+  list->n = 0;
+  list->cap = 0;
+}
+
+static void field_value_list_free(FieldValueList *list) {
+  free(list->v);
+  list->v = NULL;
+  list->n = 0;
+  list->cap = 0;
+}
+
+static int field_value_list_add_unique(FieldValueList *list,
+                                       const char *value) {
+  const char **tmp;
+  size_t i;
+
+  for (i = 0; i < list->n; i++)
+    if (strcmp(list->v[i], value) == 0)
+      return 0;
+
+  if (list->n == list->cap) {
+    size_t newcap = list->cap == 0 ? 4 : list->cap * 2;
+
+    tmp = realloc(list->v, newcap * sizeof *list->v);
+    if (tmp == NULL)
+      return -1;
+
+    list->v = tmp;
+    list->cap = newcap;
+  }
+
+  list->v[list->n++] = value;
+  return 0;
 }
 
 static const char *ledger_field_view(const char *p, const char *end,
