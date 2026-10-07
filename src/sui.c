@@ -198,6 +198,9 @@ static int split_selected_route(const Ledger *ledger,
                                 const SelectedRoute *route,
                                 RouteRunList *runs);
 static size_t route_transfer_count(const RouteRunList *runs);
+static int evaluate_selected_route(const Ledger *ledger,
+                                   const SelectedRoute *route,
+                                   size_t *transfers);
 static int ledger_run_matches(const Ledger *ledger,
                               const SelectedRoute *route,
                               const RouteRun *run,
@@ -731,6 +734,22 @@ static int split_selected_route(const Ledger *ledger,
 
 static size_t route_transfer_count(const RouteRunList *runs) {
   return runs->n == 0 ? 0 : runs->n - 1;
+}
+
+static int evaluate_selected_route(const Ledger *ledger,
+                                   const SelectedRoute *route,
+                                   size_t *transfers) {
+  RouteRunList runs;
+
+  route_run_list_init(&runs);
+  if (split_selected_route(ledger, route, &runs) != 0) {
+    route_run_list_free(&runs);
+    return -1;
+  }
+
+  *transfers = route_transfer_count(&runs);
+  route_run_list_free(&runs);
+  return 0;
 }
 
 static int ledger_run_matches(const Ledger *ledger,
@@ -2941,6 +2960,16 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
     {
       RouteRunList runs;
+      size_t transfers;
+
+      if (evaluate_selected_route(ledger, &accepted, &transfers) != 0) {
+        selected_route_free(&accepted);
+        longest_path_list_free(&paths);
+        lattice_free(&lat);
+        free_sui_input(&parsed);
+        return -1;
+      }
+      (void)transfers; /* Route comparison will consume this next. */
 
       route_run_list_init(&runs);
       if (split_selected_route(ledger, &accepted, &runs) != 0) {
