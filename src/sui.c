@@ -1916,8 +1916,10 @@ static int emit_best_mixed_route(const Ledger *ledger,
 
         occurrence_match_list_init(&provenance_occurrences);
 
-        if (i != 0 &&
-            route->v[i - 1].surface > ledger->null_surface) {
+        if ((i != 0 &&
+             route->v[i - 1].surface > ledger->null_surface) ||
+            (i + 1 < route->n &&
+             route->v[i + 1].surface > ledger->null_surface)) {
           provenance_source = &provenance_occurrences;
         } else if (i != 0 &&
                    route->v[i - 1].surface <
