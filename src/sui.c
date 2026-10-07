@@ -695,6 +695,138 @@ static int emit_adjacency_work_row(FILE *fp, const MkledgerConfig *config,
   return ferror(fp) ? -1 : 0;
 }
 
+static int append_soft_candy_candidates(const Ledger *ledger,
+                                        const MkledgerConfig *config,
+                                        const SuiInput *input,
+                                        size_t start) {
+  const char *p;
+  const char *end;
+  uint32_t i;
+  FILE *fp = NULL;
+  int appended = 0;
+
+  if (config == NULL || config->candy.filename == NULL ||
+      config->ledger.trie == NULL || input->text[start] == '\0')
+    return 0;
+
+  p = (const char *)(ledger->combine + 1);
+  end = (const char *)ledger->occurrence;
+
+  for (i = 0; i < ledger->combine->ncombines; i++) {
+    const CombineRecordHeader *combine;
+    const char *fields;
+    const char *q;
+    const char *matched = NULL;
+    size_t matched_len = 0;
+    uint32_t j;
+
+    if ((size_t)(end - p) < sizeof *combine)
+      goto fail;
+
+    combine = (const CombineRecordHeader *)p;
+    p += sizeof *combine;
+    fields = p;
+    q = fields;
+
+    for (j = 0; j < combine->nfields; j++) {
+      LedgerFieldView view;
+      const char *next = ledger_field_view(q, end, &view);
+
+      if (next == NULL)
+        goto fail;
+
+      if (view.type == 0 &&
+          strcmp(view.name, config->ledger.trie) != 0) {
+        size_t len = strlen(view.value);
+
+        if (len > matched_len &&
+            strncmp(input->text + start, view.value, len) == 0) {
+          matched = view.value;
+          matched_len = len;
+        }
+      }
+      q = next;
+    }
+    p = q;
+
+    for (j = 0; j < combine->nprovenance; j++) {
+      const ProvenanceRecordHeader *provenance;
+      uint32_t k;
+
+      if ((size_t)(end - p) < sizeof *provenance)
+        goto fail;
+      provenance = (const ProvenanceRecordHeader *)p;
+      p += sizeof *provenance;
+
+      for (k = 0; k < provenance->nfields; k++) {
+        p = skip_ledger_field(p, end);
+        if (p == NULL)
+          goto fail;
+      }
+    }
+
+    if (matched == NULL || matched_len == 0)
+      continue;
+
+    if (fp == NULL) {
+      fp = fopen(config->candy.filename, "a");
+      if (fp == NULL)
+        return -1;
+    }
+
+    fprintf(fp, "!{\"start\":%zu,\"end\":%zu,\"text\":",
+            start, start + matched_len);
+    {
+      char *text = strndup(input->text + start, matched_len);
+      if (text == NULL)
+        goto fail;
+      print_json_string_to(fp, text);
+      free(text);
+    }
+
+    if (input->nprovenance != 0)
+      print_input_provenance(fp, input);
+
+    q = fields;
+    for (j = 0; j < combine->nfields; j++) {
+      LedgerFieldView view;
+      const char *next = ledger_field_view(q, end, &view);
+
+      if (next == NULL)
+        goto fail;
+
+      fputc(',', fp);
+      print_json_string_to(fp, view.name);
+      fputc(':', fp);
+
+      if (strcmp(view.name, config->ledger.trie) == 0) {
+        char *surface = strndup(input->text + start, matched_len);
+        if (surface == NULL)
+          goto fail;
+        print_json_string_to(fp, surface);
+        free(surface);
+      } else if (view.type == 0) {
+        print_json_string_to(fp, view.value);
+      } else {
+        fputs(view.value, fp);
+      }
+      q = next;
+    }
+
+    fputs("}\n", fp);
+    appended = 1;
+  }
+
+  if (fp != NULL && fclose(fp) != 0)
+    return -1;
+  return appended;
+
+fail:
+  if (fp != NULL)
+    fclose(fp);
+  return -1;
+}
+
 static int append_uncovered_adjacencies(const Ledger *ledger,
                                         const MkledgerConfig *config,
                                         const SuiInput *input,
@@ -4375,8 +4507,19 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
     }
 
     int appended_adjacency = 0;
+    int appended_soft_candy = 0;
 
     if (append_candy) {
+      appended_soft_candy =
+          append_soft_candy_candidates(ledger, config, &parsed, target_end);
+      if (appended_soft_candy < 0) {
+        selected_route_free(&accepted);
+        longest_path_list_free(&paths);
+        lattice_free(&lat);
+        free_sui_input(&parsed);
+        return -1;
+      }
+
       appended_adjacency =
           append_uncovered_adjacencies(ledger, config, &parsed, &lat, &paths,
                                        target_end);
@@ -4399,7 +4542,8 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           return -1;
         }
 
-        if (append_candy && !appended_adjacency &&
+        if (append_candy && !appended_soft_candy &&
+            !appended_adjacency &&
             !candy_has_unresolved(ledger, config, &parsed, target_end,
                                   input_end)) {
           FILE *fp = fopen(config->candy.filename, "a");
