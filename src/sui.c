@@ -351,6 +351,7 @@ static void aggregated_record_free(AggregatedRecord *record);
 static int aggregate_occurrence_record(
     const Ledger *ledger, const OccurrenceMatchList *occurrences,
     AggregatedRecord *record);
+static int emit_aggregated_record_fields(const AggregatedRecord *record);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -1856,6 +1857,51 @@ static int aggregate_occurrence_record(
   }
 
   return 0;
+}
+
+static int emit_aggregated_record_fields(const AggregatedRecord *record) {
+  size_t i;
+
+  for (i = 0; i < record->n; i++) {
+    const AggregatedField *field = &record->v[i];
+    size_t j;
+
+    if (i != 0)
+      putchar(',');
+
+    print_json_string(field->name);
+    putchar(':');
+
+    if (field->values.n == 0) {
+      if (field->type == 0)
+        print_json_string("");
+      else
+        fputs("0", stdout);
+      continue;
+    }
+
+    if (field->values.n == 1) {
+      if (field->type == 0)
+        print_json_string(field->values.v[0]);
+      else
+        fputs(field->values.v[0], stdout);
+      continue;
+    }
+
+    if (field->type == 0) {
+      putchar('"');
+      for (j = 0; j < field->values.n; j++) {
+        if (j != 0)
+          putchar(',');
+        fputs(field->values.v[j], stdout);
+      }
+      putchar('"');
+    } else {
+      fputs(field->values.v[0], stdout);
+    }
+  }
+
+  return ferror(stdout) ? -1 : 0;
 }
 
 static const char *ledger_field_view(const char *p, const char *end,
