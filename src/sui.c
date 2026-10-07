@@ -2940,7 +2940,81 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
       size_t i;
       size_t candidate_count =
           longest_path_candidate_count(&paths, initial->start, initial->end);
-      (void)candidate_count; /* Best mode will compare these candidates next. */
+
+      if (best && candidate_count > 1) {
+        const LongestPath *candidate;
+        const LongestPath *best_candidate = initial;
+        RouteEvaluation best_evaluation;
+        SelectedRoute candidate_route;
+
+        selected_route_init(&candidate_route);
+        for (i = 0; i < best_candidate->route_n; i++)
+          if (selected_route_add(&candidate_route,
+                                 best_candidate->route[i].start,
+                                 best_candidate->route[i].end,
+                                 best_candidate->route[i].surface) != 0) {
+            selected_route_free(&candidate_route);
+            selected_route_free(&accepted);
+            longest_path_list_free(&paths);
+            lattice_free(&lat);
+            free_sui_input(&parsed);
+            return -1;
+          }
+
+        if (evaluate_selected_route(ledger, &candidate_route,
+                                    &best_evaluation) != 0) {
+          selected_route_free(&candidate_route);
+          selected_route_free(&accepted);
+          longest_path_list_free(&paths);
+          lattice_free(&lat);
+          free_sui_input(&parsed);
+          return -1;
+        }
+        selected_route_free(&candidate_route);
+
+        for (candidate = paths.v; candidate < paths.v + paths.n;
+             candidate++) {
+          RouteEvaluation evaluation;
+
+          if (candidate == best_candidate ||
+              candidate->start != initial->start ||
+              candidate->end != initial->end)
+            continue;
+
+          selected_route_init(&candidate_route);
+          for (i = 0; i < candidate->route_n; i++)
+            if (selected_route_add(&candidate_route,
+                                   candidate->route[i].start,
+                                   candidate->route[i].end,
+                                   candidate->route[i].surface) != 0) {
+              selected_route_free(&candidate_route);
+              selected_route_free(&accepted);
+              longest_path_list_free(&paths);
+              lattice_free(&lat);
+              free_sui_input(&parsed);
+              return -1;
+            }
+
+          if (evaluate_selected_route(ledger, &candidate_route,
+                                      &evaluation) != 0) {
+            selected_route_free(&candidate_route);
+            selected_route_free(&accepted);
+            longest_path_list_free(&paths);
+            lattice_free(&lat);
+            free_sui_input(&parsed);
+            return -1;
+          }
+          selected_route_free(&candidate_route);
+
+          if (route_evaluation_compare(&evaluation, &best_evaluation) < 0) {
+            best_candidate = candidate;
+            best_evaluation = evaluation;
+          }
+        }
+
+        initial = best_candidate;
+      }
+
       for (i = 0; i < initial->route_n; i++)
         if (selected_route_add(&accepted, initial->route[i].start,
                                initial->route[i].end,
