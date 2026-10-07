@@ -137,6 +137,13 @@ typedef struct {
   size_t nprovenance;
 } SuiInput;
 
+typedef struct {
+  const char *name;
+  const char *value;
+  uint32_t type;
+} LedgerFieldView;
+
+
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b);
 static void show_uncovered_adjacencies(const Ledger *ledger,
@@ -314,6 +321,8 @@ static int emit_occurrence(const Ledger *ledger,
 static int occurrence_combine_fields(
     const Ledger *ledger, const OccurrenceRecord *occurrence,
     const CombineRecordHeader **combine_out, const char **fields_out);
+static const char *ledger_field_view(const char *p, const char *end,
+                                     LedgerFieldView *view);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -1664,6 +1673,37 @@ static void print_json_string(const char *s) {
   }
 
   putchar('"');
+}
+
+static const char *ledger_field_view(const char *p, const char *end,
+                                     LedgerFieldView *view) {
+  const LedgerFieldHeader *field;
+
+  if ((size_t)(end - p) < sizeof *field)
+    return NULL;
+
+  field = (const LedgerFieldHeader *)p;
+  p += sizeof *field;
+
+  if (field->name_bytes == 0 || field->name_bytes > (size_t)(end - p))
+    return NULL;
+  view->name = p;
+  p += field->name_bytes;
+
+  if (field->value_bytes == 0 || field->value_bytes > (size_t)(end - p))
+    return NULL;
+  view->value = p;
+  p += field->value_bytes;
+
+  if (view->name[field->name_bytes - 1] != '\0' ||
+      view->value[field->value_bytes - 1] != '\0')
+    return NULL;
+
+  if (field->type != 0 && field->type != 1)
+    return NULL;
+
+  view->type = field->type;
+  return p;
 }
 
 static const char *print_ledger_field_json(const char *p, const char *end) {
