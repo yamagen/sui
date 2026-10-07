@@ -1910,12 +1910,49 @@ static int emit_best_mixed_route(const Ledger *ledger,
         return -1;
       }
 
-      if (collect_occurrence_provenance(
-              ledger, &occurrences, &provenance) != 0) {
-        aggregated_record_free(&record);
-        occurrence_match_list_free(&occurrences);
-        route_occurrence_matches_free(&matches);
-        return -1;
+      {
+        OccurrenceMatchList provenance_occurrences;
+        const OccurrenceMatchList *provenance_source = &occurrences;
+
+        occurrence_match_list_init(&provenance_occurrences);
+
+        if (i != 0 &&
+            route->v[i - 1].surface < ledger->header->unique_surfaces &&
+            route->v[i].surface < ledger->header->unique_surfaces) {
+          size_t m;
+
+          for (m = 0; m < occurrences.n; m++) {
+            const OccurrenceRecord *current = occurrences.v[m];
+
+            if (current > ledger->occurrencev) {
+              const OccurrenceRecord *previous = current - 1;
+
+              if (previous->sequence == current->sequence &&
+                  previous->surface == route->v[i - 1].surface &&
+                  occurrence_match_list_add(&provenance_occurrences,
+                                            current) != 0) {
+                occurrence_match_list_free(&provenance_occurrences);
+                aggregated_record_free(&record);
+                occurrence_match_list_free(&occurrences);
+                route_occurrence_matches_free(&matches);
+                return -1;
+              }
+            }
+          }
+
+          provenance_source = &provenance_occurrences;
+        }
+
+        if (collect_occurrence_provenance(
+                ledger, provenance_source, &provenance) != 0) {
+          occurrence_match_list_free(&provenance_occurrences);
+          aggregated_record_free(&record);
+          occurrence_match_list_free(&occurrences);
+          route_occurrence_matches_free(&matches);
+          return -1;
+        }
+
+        occurrence_match_list_free(&provenance_occurrences);
       }
 
       putchar('{');
