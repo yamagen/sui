@@ -4526,8 +4526,14 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
             candidate_end = resume_from_soft_candy_source(
                 ledger, config, input, candidate_end,
                 candidates.v[ci].text, &candidate_route);
-            candidate_end = resume_from_midroute(
-                ledger, input, &lat, candidate_end, &candidate_route, 1);
+            for (;;) {
+              size_t previous_midroute_end = candidate_end;
+
+              candidate_end = resume_from_midroute(
+                  ledger, input, &lat, candidate_end, &candidate_route, 1);
+              if (candidate_end <= previous_midroute_end)
+                break;
+            }
           }
 
           if (evaluate_selected_route(ledger, &candidate_route,
@@ -4588,8 +4594,14 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           if (target_end == candy_end) {
             target_end = resume_from_soft_candy_source(
                 ledger, config, input, target_end, accepted_text, &accepted);
-            target_end = resume_from_midroute(
-                ledger, input, &lat, target_end, &accepted, 0);
+            for (;;) {
+              size_t previous_midroute_end = target_end;
+
+              target_end = resume_from_midroute(
+                  ledger, input, &lat, target_end, &accepted, 0);
+              if (target_end <= previous_midroute_end)
+                break;
+            }
           }
         }
         free(accepted_text);
