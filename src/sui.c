@@ -149,6 +149,17 @@ typedef struct {
   size_t cap;
 } FieldValueList;
 
+typedef struct {
+  const char *name;
+  uint32_t type;
+  FieldValueList values;
+} AggregatedField;
+
+typedef struct {
+  AggregatedField *v;
+  size_t n;
+} AggregatedRecord;
+
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b);
@@ -336,6 +347,10 @@ static int field_value_list_add_unique(FieldValueList *list,
 static int collect_occurrence_field_values(
     const Ledger *ledger, const OccurrenceMatchList *occurrences,
     const char *field_name, uint32_t field_type, FieldValueList *values);
+static void aggregated_record_free(AggregatedRecord *record);
+static int aggregate_occurrence_record(
+    const Ledger *ledger, const OccurrenceMatchList *occurrences,
+    AggregatedRecord *record);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -1763,6 +1778,67 @@ static int collect_occurrence_field_values(
 
       fieldp = next;
     }
+  }
+
+  return 0;
+}
+
+static void aggregated_record_free(AggregatedRecord *record) {
+  size_t i;
+
+  if (record->v != NULL) {
+    for (i = 0; i < record->n; i++)
+      field_value_list_free(&record->v[i].values);
+  }
+
+  free(record->v);
+  record->v = NULL;
+  record->n = 0;
+}
+
+static int aggregate_occurrence_record(
+    const Ledger *ledger, const OccurrenceMatchList *occurrences,
+    AggregatedRecord *record) {
+  const CombineRecordHeader *combine;
+  const char *p;
+  const char *end = (const char *)ledger->occurrence;
+  uint32_t j;
+
+  record->v = NULL;
+  record->n = 0;
+
+  if (occurrences->n == 0)
+    return 0;
+
+  if (occurrence_combine_fields(
+          ledger, occurrences->v[0], &combine, &p) != 0)
+    return -1;
+
+  record->v = calloc(combine->nfields, sizeof *record->v);
+  if (record->v == NULL && combine->nfields != 0)
+    return -1;
+  record->n = combine->nfields;
+
+  for (j = 0; j < combine->nfields; j++) {
+    LedgerFieldView view;
+    const char *next = ledger_field_view(p, end, &view);
+
+    if (next == NULL) {
+      aggregated_record_free(record);
+      return -1;
+    }
+
+    record->v[j].name = view.name;
+    record->v[j].type = view.type;
+
+    if (collect_occurrence_field_values(
+            ledger, occurrences, view.name, view.type,
+            &record->v[j].values) != 0) {
+      aggregated_record_free(record);
+      return -1;
+    }
+
+    p = next;
   }
 
   return 0;
