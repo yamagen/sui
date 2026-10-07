@@ -85,6 +85,18 @@ typedef struct {
 } RouteEvaluation;
 
 typedef struct {
+  size_t end;
+  char *text;
+  uint32_t surface;
+} CandyCandidate;
+
+typedef struct {
+  CandyCandidate *v;
+  size_t n;
+  size_t cap;
+} CandyCandidateList;
+
+typedef struct {
   size_t start;
   size_t end;
 } Gap;
@@ -311,6 +323,10 @@ static int emit_unresolved(FILE *fp, const MkledgerConfig *config,
 static char *parse_candy_text(const char *line);
 static int index_candy_surfaces(Ledger *ledger,
                                 const MkledgerConfig *config);
+static void candy_candidate_list_init(CandyCandidateList *list);
+static void candy_candidate_list_free(CandyCandidateList *list);
+static int candy_candidate_list_add(CandyCandidateList *list, size_t end,
+                                    const char *text, uint32_t surface);
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy,
                          int best);
@@ -2775,6 +2791,46 @@ static size_t ignored_advance(const MkledgerConfig *config,
   }
 
   return best_end;
+}
+
+static void candy_candidate_list_init(CandyCandidateList *list) {
+  list->v = NULL;
+  list->n = 0;
+  list->cap = 0;
+}
+
+static void candy_candidate_list_free(CandyCandidateList *list) {
+  size_t i;
+
+  for (i = 0; i < list->n; i++)
+    free(list->v[i].text);
+  free(list->v);
+  list->v = NULL;
+  list->n = 0;
+  list->cap = 0;
+}
+
+static int candy_candidate_list_add(CandyCandidateList *list, size_t end,
+                                    const char *text, uint32_t surface) {
+  CandyCandidate *tmp;
+
+  if (list->n == list->cap) {
+    size_t newcap = list->cap == 0 ? 8 : list->cap * 2;
+
+    tmp = realloc(list->v, newcap * sizeof *list->v);
+    if (tmp == NULL)
+      return -1;
+    list->v = tmp;
+    list->cap = newcap;
+  }
+
+  list->v[list->n].text = strdup(text);
+  if (list->v[list->n].text == NULL)
+    return -1;
+  list->v[list->n].end = end;
+  list->v[list->n].surface = surface;
+  list->n++;
+  return 0;
 }
 
 static size_t candy_approved_advance(const Ledger *ledger,
