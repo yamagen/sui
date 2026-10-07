@@ -226,6 +226,10 @@ static void occurrence_match_list_init(OccurrenceMatchList *list);
 static void occurrence_match_list_free(OccurrenceMatchList *list);
 static int occurrence_match_list_add(OccurrenceMatchList *list,
                                      const OccurrenceRecord *occurrence);
+static int collect_ledger_run_matches(const Ledger *ledger,
+                                      const SelectedRoute *route,
+                                      const RouteRun *run,
+                                      OccurrenceMatchList *matches);
 static int evaluate_selected_route(const Ledger *ledger,
                                    const SelectedRoute *route,
                                    RouteEvaluation *evaluation);
@@ -917,6 +921,29 @@ static int ledger_run_matches(const Ledger *ledger,
   }
 
   return 1;
+}
+
+static int collect_ledger_run_matches(const Ledger *ledger,
+                                      const SelectedRoute *route,
+                                      const RouteRun *run,
+                                      OccurrenceMatchList *matches) {
+  const OccurrenceRecord *occurrence;
+  const OccurrenceRecord *end =
+      ledger->occurrencev + ledger->occurrence->noccurrences;
+
+  occurrence_match_list_init(matches);
+
+  for (occurrence = ledger->occurrencev; occurrence < end; occurrence++) {
+    if (!ledger_run_matches(ledger, route, run, occurrence))
+      continue;
+
+    if (occurrence_match_list_add(matches, occurrence) != 0) {
+      occurrence_match_list_free(matches);
+      return -1;
+    }
+  }
+
+  return 0;
 }
 
 static size_t runtime_surface_offset(const Ledger *ledger, uint32_t surface) {
