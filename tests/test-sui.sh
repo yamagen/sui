@@ -73,7 +73,8 @@ printf '%s\n' "${context#!}" |
 
 candy=$(mktemp)
 candy_config=$(mktemp)
-trap 'rm -f "$candy" "$candy_config"' EXIT
+transfer_dir=$(mktemp -d)
+trap 'rm -f "$candy" "$candy_config"; rm -rf "$transfer_dir"' EXIT
 jq --arg filename "$candy" '
   .schema += {
     "word": "string",
@@ -155,5 +156,51 @@ jq -e '
          all(.records[]; has("text") | not))
 ' >/dev/null ||
   fail "approved candy bridges ledger runs"
+
+cat >"$transfer_dir/config.json" <<EOF
+{
+  "version": "1.0",
+  "filename": "config.json",
+  "ledger": {"sequence": "id", "trie": "word"},
+  "schema": {"id": "integer", "word": "string"},
+  "provenance": [],
+  "candy": {"filename": "$transfer_dir/candy.jsonl"}
+}
+EOF
+
+cat >"$transfer_dir/input.jsonl" <<'EOF'
+{"id":1,"word":"A"}
+{"id":2,"word":"C"}
+EOF
+
+cat >"$transfer_dir/candy.jsonl" <<'EOF'
+{"text":"A","word":"A"}
+{"text":"B","word":"B"}
+{"text":"A","word":"A"}
+{"text":"BC","word":"BC"}
+EOF
+
+(
+  cd "$transfer_dir"
+  "$OLDPWD/mkledger" -c config.json input.jsonl >/dev/null
+)
+
+transfer_plain=$(printf '%s\n' 'ABC' |
+  "$SUI" -c "$transfer_dir/config.json" "$transfer_dir/ledger.dat")
+printf '%s\n' "$transfer_plain" |
+jq -e '
+  select(.start == 0 and .end == 3 and
+         [.records[].word] == ["A", "B", "C"])
+' >/dev/null ||
+  fail "plain candy candidate order"
+
+transfer_best=$(printf '%s\n' 'ABC' |
+  "$SUI" -b -c "$transfer_dir/config.json" "$transfer_dir/ledger.dat")
+printf '%s\n' "$transfer_best" |
+jq -e '
+  select(.start == 0 and .end == 3 and
+         [.records[].word] == ["A", "BC"])
+' >/dev/null ||
+  fail "best prefers fewer transfers"
 
 echo "PASS: sui regression tests"
