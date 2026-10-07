@@ -4522,10 +4522,13 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           candidate_end = resume_from_confirmed_surface(
               ledger, input, &lat, candidates.v[ci].end,
               candidates.v[ci].text, &candidate_route, 1);
-          if (candidate_end == candidates.v[ci].end)
+          if (candidate_end == candidates.v[ci].end) {
             candidate_end = resume_from_soft_candy_source(
                 ledger, config, input, candidate_end,
                 candidates.v[ci].text, &candidate_route);
+            candidate_end = resume_from_midroute(
+                ledger, input, &lat, candidate_end, &candidate_route, 1);
+          }
 
           if (evaluate_selected_route(ledger, &candidate_route,
                                       &evaluation) != 0) {
@@ -4582,9 +4585,12 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
           target_end = candy_end;
           target_end = resume_from_confirmed_surface(
               ledger, input, &lat, target_end, accepted_text, &accepted, 0);
-          if (target_end == candy_end)
+          if (target_end == candy_end) {
             target_end = resume_from_soft_candy_source(
                 ledger, config, input, target_end, accepted_text, &accepted);
+            target_end = resume_from_midroute(
+                ledger, input, &lat, target_end, &accepted, 0);
+          }
         }
         free(accepted_text);
       }
