@@ -498,6 +498,114 @@ static size_t resume_from_root_paths(
   return best_end;
 }
 
+static size_t resume_from_midroute(
+    const Ledger *ledger, const char *input, const Lattice *lat,
+    size_t target_end, SelectedRoute *accepted, int best_mode) {
+  size_t edge_index;
+  size_t best_end = target_end;
+  SelectedRoute best_route;
+  RouteEvaluation best_evaluation = {0};
+  int have_best = 0;
+
+  selected_route_init(&best_route);
+
+  for (edge_index = 0; edge_index < lat->n; edge_index++) {
+    uint32_t node;
+
+    if (lat->v[edge_index].start != target_end)
+      continue;
+    if (lat->v[edge_index].surface >= ledger->header->unique_surfaces)
+      continue;
+
+    for (node = 1; node < ledger->header->trie_nodes; node++) {
+      LongestPath path;
+      SelectedRoute route;
+      SelectedRoute candidate;
+      RouteEvaluation evaluation;
+      size_t i;
+
+      if (ledger->trie[node].token != lat->v[edge_index].surface)
+        continue;
+
+      path.start = lat->v[edge_index].start;
+      path.end = lat->v[edge_index].end;
+      path.depth = 1;
+      path.freq = ledger->trie[node].freq;
+      path.surface = lat->v[edge_index].surface;
+      path.route = NULL;
+      path.route_n = 0;
+      selected_route_init(&route);
+
+      if (find_longest_from(ledger, input, lat, edge_index, node, 1,
+                            &path, &route) != 0) {
+        selected_route_free(&route);
+        free(path.route);
+        selected_route_free(&best_route);
+        return target_end;
+      }
+      selected_route_free(&route);
+
+      selected_route_init(&candidate);
+      for (i = 0; i < accepted->n; i++)
+        if (selected_route_add(&candidate, accepted->v[i].start,
+                               accepted->v[i].end,
+                               accepted->v[i].surface) != 0) {
+          selected_route_free(&candidate);
+          free(path.route);
+          selected_route_free(&best_route);
+          return target_end;
+        }
+      for (i = 0; i < path.route_n; i++)
+        if (selected_route_add(&candidate, path.route[i].start,
+                               path.route[i].end,
+                               path.route[i].surface) != 0) {
+          selected_route_free(&candidate);
+          free(path.route);
+          selected_route_free(&best_route);
+          return target_end;
+        }
+
+      if (evaluate_selected_route(ledger, &candidate, &evaluation) != 0) {
+        selected_route_free(&candidate);
+        free(path.route);
+        selected_route_free(&best_route);
+        return target_end;
+      }
+
+      if (path.end > best_end ||
+          (path.end == best_end &&
+           (!have_best ||
+            (best_mode &&
+             route_evaluation_compare(&evaluation, &best_evaluation) < 0)))) {
+        selected_route_free(&best_route);
+        best_route = candidate;
+        selected_route_init(&candidate);
+        best_end = path.end;
+        best_evaluation = evaluation;
+        have_best = 1;
+      }
+
+      selected_route_free(&candidate);
+      free(path.route);
+    }
+  }
+
+  if (have_best) {
+    size_t i;
+
+    for (i = accepted->n; i < best_route.n; i++)
+      if (selected_route_add(accepted, best_route.v[i].start,
+                             best_route.v[i].end,
+                             best_route.v[i].surface) != 0) {
+        selected_route_free(&best_route);
+        return target_end;
+      }
+  }
+
+  selected_route_free(&best_route);
+  return best_end;
+}
+
 static int process_input(const Ledger *ledger, const MkledgerConfig *config,
                          int monitor, int unresolved, int append_candy,
                          int best);
@@ -4144,8 +4252,8 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
         }
 
         if (crossed_ignore)
-          target_end = resume_from_root_paths(
-              ledger, &paths, target_end, &accepted, best);
+          target_end = resume_from_midroute(
+              ledger, input, &lat, target_end, &accepted, best);
       }
 
       if (target_end <= previous_end)
