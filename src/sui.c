@@ -207,6 +207,20 @@ static int evaluate_selected_route(const Ledger *ledger,
                                    RouteEvaluation *evaluation);
 static int route_evaluation_compare(const RouteEvaluation *a,
                                     const RouteEvaluation *b);
+static size_t longest_path_candidate_count(const LongestPathList *paths,
+                                           size_t start, size_t end);
+static size_t longest_path_candidate_count(const LongestPathList *paths,
+                                           size_t start, size_t end) {
+  size_t count = 0;
+  const LongestPath *path;
+
+  for (path = paths->v; path < paths->v + paths->n; path++)
+    if (path->start == start && path->end == end)
+      count++;
+
+  return count;
+}
+
 static int ledger_run_matches(const Ledger *ledger,
                               const SelectedRoute *route,
                               const RouteRun *run,
@@ -2924,6 +2938,9 @@ static int process_input(const Ledger *ledger, const MkledgerConfig *config,
 
     if (initial != NULL) {
       size_t i;
+      size_t candidate_count =
+          longest_path_candidate_count(&paths, initial->start, initial->end);
+      (void)candidate_count; /* Best mode will compare these candidates next. */
       for (i = 0; i < initial->route_n; i++)
         if (selected_route_add(&accepted, initial->route[i].start,
                                initial->route[i].end,
