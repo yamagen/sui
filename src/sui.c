@@ -86,6 +86,13 @@ typedef struct {
 } RouteEvaluation;
 
 typedef struct {
+  const OccurrenceRecord **v;
+  size_t n;
+  size_t cap;
+} OccurrenceMatchList;
+
+
+typedef struct {
   size_t end;
   char *text;
   uint32_t surface;
@@ -215,6 +222,10 @@ static int split_selected_route(const Ledger *ledger,
                                 const SelectedRoute *route,
                                 RouteRunList *runs);
 static size_t route_transfer_count(const RouteRunList *runs);
+static void occurrence_match_list_init(OccurrenceMatchList *list);
+static void occurrence_match_list_free(OccurrenceMatchList *list);
+static int occurrence_match_list_add(OccurrenceMatchList *list,
+                                     const OccurrenceRecord *occurrence);
 static int evaluate_selected_route(const Ledger *ledger,
                                    const SelectedRoute *route,
                                    RouteEvaluation *evaluation);
@@ -808,6 +819,38 @@ static int split_selected_route(const Ledger *ledger,
 
 static size_t route_transfer_count(const RouteRunList *runs) {
   return runs->n == 0 ? 0 : runs->n - 1;
+}
+
+static void occurrence_match_list_init(OccurrenceMatchList *list) {
+  list->v = NULL;
+  list->n = 0;
+  list->cap = 0;
+}
+
+static void occurrence_match_list_free(OccurrenceMatchList *list) {
+  free(list->v);
+  list->v = NULL;
+  list->n = 0;
+  list->cap = 0;
+}
+
+static int occurrence_match_list_add(OccurrenceMatchList *list,
+                                     const OccurrenceRecord *occurrence) {
+  const OccurrenceRecord **tmp;
+
+  if (list->n == list->cap) {
+    size_t newcap = list->cap == 0 ? 8 : list->cap * 2;
+
+    tmp = realloc(list->v, newcap * sizeof *list->v);
+    if (tmp == NULL)
+      return -1;
+
+    list->v = tmp;
+    list->cap = newcap;
+  }
+
+  list->v[list->n++] = occurrence;
+  return 0;
 }
 
 static int evaluate_selected_route(const Ledger *ledger,
