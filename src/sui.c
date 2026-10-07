@@ -160,6 +160,17 @@ typedef struct {
   size_t n;
 } AggregatedRecord;
 
+typedef struct {
+  const CombineRecordHeader *combine;
+  const ProvenanceRecordHeader *provenance;
+} ProvenanceView;
+
+typedef struct {
+  ProvenanceView *v;
+  size_t n;
+  size_t cap;
+} ProvenanceViewList;
+
 
 static bool reach_covers_adjacency(const LongestPathList *list,
                                    const LatticeEdge *a, const LatticeEdge *b);
@@ -352,6 +363,11 @@ static int aggregate_occurrence_record(
     const Ledger *ledger, const OccurrenceMatchList *occurrences,
     AggregatedRecord *record);
 static int emit_aggregated_record_fields(const AggregatedRecord *record);
+static void provenance_view_list_init(ProvenanceViewList *list);
+static void provenance_view_list_free(ProvenanceViewList *list);
+static int collect_occurrence_provenance(
+    const Ledger *ledger, const OccurrenceMatchList *occurrences,
+    ProvenanceViewList *list);
 static int emit_best_mixed_route(const Ledger *ledger,
                                  const SelectedRoute *route,
                                  const RouteRunList *runs,
@@ -1884,6 +1900,95 @@ static int aggregate_occurrence_record(
   }
 
   return 0;
+}
+
+static void provenance_view_list_init(ProvenanceViewList *list) {
+  list->v = NULL;
+  list->n = 0;
+  list->cap = 0;
+}
+
+static void provenance_view_list_free(ProvenanceViewList *list) {
+  free(list->v);
+  list->v = NULL;
+  list->n = 0;
+  list->cap = 0;
+}
+
+static int collect_occurrence_provenance(
+    const Ledger *ledger, const OccurrenceMatchList *occurrences,
+    ProvenanceViewList *list) {
+  const char *end = (const char *)ledger->occurrence;
+  size_t i;
+
+  provenance_view_list_init(list);
+
+  for (i = 0; i < occurrences->n; i++) {
+    const OccurrenceRecord *occurrence = occurrences->v[i];
+    const CombineRecordHeader *combine;
+    const char *p;
+    uint32_t j;
+
+    if (occurrence_combine_fields(ledger, occurrence, &combine, &p) != 0)
+      goto fail;
+
+    for (j = 0; j < combine->nfields; j++) {
+      p = skip_ledger_field(p, end);
+      if (p == NULL)
+        goto fail;
+    }
+
+    if (occurrence->provenance >= combine->nprovenance)
+      goto fail;
+
+    for (j = 0; j < occurrence->provenance; j++) {
+      const ProvenanceRecordHeader *provenance;
+      uint32_t k;
+
+      if ((size_t)(end - p) < sizeof *provenance)
+        goto fail;
+
+      provenance = (const ProvenanceRecordHeader *)p;
+      p += sizeof *provenance;
+
+      for (k = 0; k < provenance->nfields; k++) {
+        p = skip_ledger_field(p, end);
+        if (p == NULL)
+          goto fail;
+      }
+    }
+
+    {
+      const ProvenanceRecordHeader *provenance;
+      ProvenanceView *tmp;
+
+      if ((size_t)(end - p) < sizeof *provenance)
+        goto fail;
+
+      provenance = (const ProvenanceRecordHeader *)p;
+
+      if (list->n == list->cap) {
+        size_t newcap = list->cap == 0 ? 4 : list->cap * 2;
+
+        tmp = realloc(list->v, newcap * sizeof *list->v);
+        if (tmp == NULL)
+          goto fail;
+
+        list->v = tmp;
+        list->cap = newcap;
+      }
+
+      list->v[list->n].combine = combine;
+      list->v[list->n].provenance = provenance;
+      list->n++;
+    }
+  }
+
+  return 0;
+
+fail:
+  provenance_view_list_free(list);
+  return -1;
 }
 
 static int emit_aggregated_record_fields(const AggregatedRecord *record) {
