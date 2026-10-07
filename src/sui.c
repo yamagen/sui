@@ -352,6 +352,10 @@ static int aggregate_occurrence_record(
     const Ledger *ledger, const OccurrenceMatchList *occurrences,
     AggregatedRecord *record);
 static int emit_aggregated_record_fields(const AggregatedRecord *record);
+static int emit_best_mixed_route(const Ledger *ledger,
+                                 const SelectedRoute *route,
+                                 const RouteRunList *runs,
+                                 size_t target_end);
 
 static void gaplist_init(GapList *gaps);
 static void gaplist_free(GapList *gaps);
@@ -1307,6 +1311,66 @@ static int emit_mixed_route_from(const Ledger *ledger,
   return 0;
 }
 
+static int emit_best_mixed_route(const Ledger *ledger,
+                                 const SelectedRoute *route,
+                                 const RouteRunList *runs,
+                                 size_t target_end) {
+  RouteOccurrenceMatches matches;
+  size_t i;
+  int first_record = 1;
+
+  if (collect_route_occurrence_matches(ledger, route, runs, &matches) != 0)
+    return -1;
+
+  printf("{\"start\":%zu,\"end\":%zu,\"records\":[",
+         route->v[0].start, target_end);
+
+  for (i = 0; i < route->n; i++) {
+    if (!first_record)
+      putchar(',');
+
+    if (route->v[i].surface > ledger->null_surface) {
+      if (emit_runtime_record(ledger, &route->v[i]) != 0) {
+        route_occurrence_matches_free(&matches);
+        return -1;
+      }
+    } else {
+      OccurrenceMatchList occurrences;
+      AggregatedRecord record;
+
+      if (collect_route_position_occurrences(
+              ledger, route, runs, &matches, i, &occurrences) != 0) {
+        route_occurrence_matches_free(&matches);
+        return -1;
+      }
+
+      if (aggregate_occurrence_record(ledger, &occurrences, &record) != 0) {
+        occurrence_match_list_free(&occurrences);
+        route_occurrence_matches_free(&matches);
+        return -1;
+      }
+
+      putchar('{');
+      if (emit_aggregated_record_fields(&record) != 0) {
+        aggregated_record_free(&record);
+        occurrence_match_list_free(&occurrences);
+        route_occurrence_matches_free(&matches);
+        return -1;
+      }
+      putchar('}');
+
+      aggregated_record_free(&record);
+      occurrence_match_list_free(&occurrences);
+    }
+
+    first_record = 0;
+  }
+
+  fputs("]}\n", stdout);
+  route_occurrence_matches_free(&matches);
+  return ferror(stdout) ? -1 : 0;
+}
+
 static int emit_mixed_route(const Ledger *ledger,
                             const SelectedRoute *route, size_t target_end,
                             int best_mode) {
@@ -1314,7 +1378,6 @@ static int emit_mixed_route(const Ledger *ledger,
   const OccurrenceRecord **ledger_first;
   int status;
 
-  (void)best_mode;
   route_run_list_init(&runs);
 
   if (split_selected_route(ledger, route, &runs) != 0) {
@@ -1328,45 +1391,9 @@ static int emit_mixed_route(const Ledger *ledger,
   }
 
   if (best_mode) {
-    RouteOccurrenceMatches matches;
-
-    if (collect_route_occurrence_matches(ledger, route, &runs, &matches) != 0) {
-      route_run_list_free(&runs);
-      return -1;
-    }
-
-    {
-      size_t i;
-
-      for (i = 0; i < route->n; i++) {
-        OccurrenceMatchList occurrences;
-
-        if (collect_route_position_occurrences(
-                ledger, route, &runs, &matches, i, &occurrences) != 0) {
-          route_occurrence_matches_free(&matches);
-          route_run_list_free(&runs);
-          return -1;
-        }
-
-        if (route->v[i].surface <= ledger->null_surface) {
-          AggregatedRecord record;
-
-          if (aggregate_occurrence_record(
-                  ledger, &occurrences, &record) != 0) {
-            occurrence_match_list_free(&occurrences);
-            route_occurrence_matches_free(&matches);
-            route_run_list_free(&runs);
-            return -1;
-          }
-
-          aggregated_record_free(&record);
-        }
-
-        occurrence_match_list_free(&occurrences);
-      }
-    }
-
-    route_occurrence_matches_free(&matches);
+    status = emit_best_mixed_route(ledger, route, &runs, target_end);
+    route_run_list_free(&runs);
+    return status;
   }
 
   ledger_first = calloc(runs.n, sizeof *ledger_first);
