@@ -170,6 +170,7 @@ EOF
 
 cat >"$transfer_dir/input.jsonl" <<'EOF'
 {"id":1,"word":"A"}
+{"id":2,"word":"B"}
 {"id":2,"word":"C"}
 EOF
 
