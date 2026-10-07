@@ -82,6 +82,7 @@ typedef struct {
 
 typedef struct {
   size_t transfers;
+  size_t longest_surface;
 } RouteEvaluation;
 
 typedef struct {
@@ -820,6 +821,17 @@ static int evaluate_selected_route(const Ledger *ledger,
   }
 
   evaluation->transfers = route_transfer_count(&runs);
+  evaluation->longest_surface = 0;
+  {
+    size_t i;
+
+    for (i = 0; i < route->n; i++) {
+      size_t span = route->v[i].end - route->v[i].start;
+
+      if (span > evaluation->longest_surface)
+        evaluation->longest_surface = span;
+    }
+  }
   route_run_list_free(&runs);
   return 0;
 }
@@ -829,6 +841,10 @@ static int route_evaluation_compare(const RouteEvaluation *a,
   if (a->transfers < b->transfers)
     return -1;
   if (a->transfers > b->transfers)
+    return 1;
+  if (a->longest_surface > b->longest_surface)
+    return -1;
+  if (a->longest_surface < b->longest_surface)
     return 1;
   return 0;
 }
